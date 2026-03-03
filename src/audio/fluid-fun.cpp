@@ -1,21 +1,11 @@
- #include "fluid-fun.h"
-
-#include <string.h>
-#include <SDL_loadso.h>
-#include <SDL_platform.h>
-
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
 
-#include "debugwriter.h"
-
 #if TARGET_OS_IPHONE
-// iOS: Use static linking via SHARED_FLUID - no dynamic library loading
-#ifndef SHARED_FLUID
-#define SHARED_FLUID 1
-#endif
-#define FLUID_LIB "static"
+// No fluidsynth library available for iOS - MIDI playback disabled
+#define MKXPZ_NO_FLUIDSYNTH 1
+#define FLUID_LIB "dummy"
 #elif __LINUX__ || __ANDROID__
 #define FLUID_LIB "libfluidsynth.so.3"
 #elif MKXPZ_BUILD_XCODE
@@ -27,6 +17,14 @@
 #else
 #error "platform not recognized"
 #endif
+
+#include "fluid-fun.h"
+
+#include <string.h>
+#include <SDL_loadso.h>
+#include <SDL_platform.h>
+
+#include "debugwriter.h"
 
 struct FluidFunctions fluid;
 #ifndef SHARED_FLUID
