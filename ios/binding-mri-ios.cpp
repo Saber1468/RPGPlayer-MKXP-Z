@@ -206,7 +206,7 @@ static void mriBindingInit() {
 #endif
     
     httpBindingInit();
-    
+
     if (rgssVer >= 3) {
         _rb_define_module_function(rb_mKernel, "rgss_main", mriRgssMain);
         _rb_define_module_function(rb_mKernel, "rgss_stop", mriRgssStop);
