@@ -2585,6 +2585,19 @@ static std::string fixSpecificScriptErrors(const std::string &script, const char
         }
     }
 
+    // Pokemon MoveEffects stray else fix
+    if (sName.find("PokeBattle_MoveEffects") != std::string::npos) {
+        try {
+            std::regex pattern(R"(end(\s+)else(\s+)pbShowAnimation)");
+            if (std::regex_search(result, pattern)) {
+                result = std::regex_replace(result, pattern, "end$1$2pbShowAnimation");
+                Debug() << "[MKXP-Z] SYNTAX FIX: Removed stray 'else' in COTTONSPORE block in script '" << scriptName << "'";
+            }
+        } catch (const std::regex_error& e) {
+            Debug() << "[MKXP-Z] PokeBattle_MoveEffects regex error: " << e.what();
+        }
+    }
+
     return result;
 }
 
@@ -2672,6 +2685,110 @@ RB_METHOD_GUARD(mkxpPreprocessRubyScript) {
 }
 RB_METHOD_GUARD_END
 
+struct SyntaxErrorTarget {
+    int line;
+    std::string type; // "next", "break", "else"
+};
+
+static void appendSyntaxErrorTarget(std::vector<SyntaxErrorTarget>& targets, int lineNum, const std::string& type) {
+    if (lineNum <= 0 || type.empty()) return;
+
+    for (const auto& target : targets) {
+        if (target.line == lineNum && target.type == type) {
+            return;
+        }
+    }
+
+    targets.push_back({lineNum, type});
+}
+
+static std::vector<SyntaxErrorTarget> extractSyntaxErrorTargets(const std::string& errMsg) {
+    std::vector<SyntaxErrorTarget> targets;
+    std::istringstream stream(errMsg);
+    std::string lineStr;
+    int currentLineNum = -1;
+
+    std::regex lineRegex(R"(:(\d+):)");
+
+    auto detectTargetType = [](const std::string& text) -> std::string {
+        if (text.find("Invalid next") != std::string::npos) {
+            return "next";
+        }
+        if (text.find("Invalid break") != std::string::npos) {
+            return "break";
+        }
+        if (text.find("unexpected else") != std::string::npos ||
+            text.find("unexpected `else'") != std::string::npos) {
+            return "else";
+        }
+        return "";
+    };
+
+    while (std::getline(stream, lineStr)) {
+        std::smatch match;
+        if (std::regex_search(lineStr, match, lineRegex)) {
+            currentLineNum = std::stoi(match[1].str());
+        }
+
+        std::string targetType = detectTargetType(lineStr);
+        if (!targetType.empty()) {
+            appendSyntaxErrorTarget(targets, currentLineNum, targetType);
+        }
+    }
+    return targets;
+}
+
+static std::string applyTargetedSyntaxRecovery(const std::string& script, const std::vector<SyntaxErrorTarget>& targets, const std::string& scriptName) {
+    if (targets.empty()) return script;
+    
+    std::istringstream stream(script);
+    std::string line;
+    std::string result;
+    int currentLine = 1;
+    
+    std::map<int, std::string> targetMap;
+    for (const auto& t : targets) {
+        targetMap[t.line] = t.type;
+    }
+    
+    while (std::getline(stream, line)) {
+        bool hasCarriageReturn = false;
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+            hasCarriageReturn = true;
+        }
+        
+        if (targetMap.count(currentLine) > 0) {
+            std::string type = targetMap[currentLine];
+            
+            if (type == "next") {
+                std::regex nextPattern(R"(\bnext\b)");
+                line = std::regex_replace(line, nextPattern, "return");
+                fprintf(stderr, "[MKXP-Z] SYNTAX RECOVERY: Line %d in '%s': replaced 'next' with 'return'\n", currentLine, scriptName.c_str());
+            } else if (type == "break") {
+                std::regex breakPattern(R"(\bbreak\b)");
+                line = std::regex_replace(line, breakPattern, "return");
+                fprintf(stderr, "[MKXP-Z] SYNTAX RECOVERY: Line %d in '%s': replaced 'break' with 'return'\n", currentLine, scriptName.c_str());
+            } else if (type == "else") {
+                line = "# " + line + " # [MKXP-Z] SYNTAX RECOVERY: removed unexpected else";
+                fprintf(stderr, "[MKXP-Z] SYNTAX RECOVERY: Line %d in '%s': commented out unexpected 'else'\n", currentLine, scriptName.c_str());
+            }
+        }
+        
+        result += line;
+        if (hasCarriageReturn) result += '\r';
+        result += '\n';
+        
+        currentLine++;
+    }
+    
+    if (!script.empty() && script.back() != '\n' && !result.empty()) {
+        if (result.back() == '\n') result.pop_back();
+        if (!result.empty() && result.back() == '\r' && script.back() != '\r') result.pop_back();
+    }
+    
+    return result;
+}
 
 #define SCRIPT_SECTION_FMT (rgssVer >= 3 ? "{%04ld}" : "Section%03ld")
 
@@ -3316,38 +3433,30 @@ end
                     fprintf(stderr, "[MKXP-Z] Exception: %s: %s\n", classStr, msgStr);
                     
                     // =================================================================
-                    // "Invalid next" / "Invalid break" SyntaxError Auto-Fix
+                    // "Invalid next" / "Invalid break" / "unexpected else" SyntaxError Auto-Fix
                     // =================================================================
                     // Modern Ruby's Prism parser rejects next/break inside def blocks.
                     // Older RPG Maker scripts sometimes use next/break where return
                     // should be used. We detect this at runtime and fix it via regex.
                     if (strstr(classStr, "SyntaxError") != nullptr &&
-                        (strstr(msgStr, "Invalid next") != nullptr || strstr(msgStr, "Invalid break") != nullptr)) {
+                        (strstr(msgStr, "Invalid next") != nullptr || strstr(msgStr, "Invalid break") != nullptr || 
+                         strstr(msgStr, "unexpected else") != nullptr || strstr(msgStr, "unexpected `else'") != nullptr)) {
                         
-                        fprintf(stderr, "[MKXP-Z] Detected Invalid next/break SyntaxError in '%s', attempting auto-fix...\n", scriptName);
+                        fprintf(stderr, "[MKXP-Z] Detected SyntaxError in '%s', attempting targeted auto-fix...\n", scriptName);
                         
-                        // Get the original script content
-                        std::string scriptContent = RSTRING_PTR(scriptDecoded);
-                        bool fixed = false;
+                        // Extract targets from the error message
+                        std::vector<SyntaxErrorTarget> targets = extractSyntaxErrorTargets(msgStr);
                         
-                        try {
-                            if (strstr(msgStr, "Invalid next") != nullptr) {
-                                std::regex nextPattern(R"(\bnext\b)");
-                                scriptContent = std::regex_replace(scriptContent, nextPattern, "return");
-                                fprintf(stderr, "[MKXP-Z] Replaced all 'next' with 'return' in '%s'\n", scriptName);
-                                fixed = true;
-                            }
-                            if (strstr(msgStr, "Invalid break") != nullptr) {
-                                std::regex breakPattern(R"(\bbreak\b)");
-                                scriptContent = std::regex_replace(scriptContent, breakPattern, "return");
-                                fprintf(stderr, "[MKXP-Z] Replaced all 'break' with 'return' in '%s'\n", scriptName);
-                                fixed = true;
-                            }
-                        } catch (const std::regex_error& e) {
-                            fprintf(stderr, "[MKXP-Z] Regex error during Invalid next/break fix: %s\n", e.what());
-                        }
-                        
-                        if (fixed) {
+                        if (!targets.empty()) {
+                            // Get the original script content
+                            std::string scriptContent = RSTRING_PTR(scriptDecoded);
+                            
+                            // Apply targeted fix
+                            scriptContent = applyTargetedSyntaxRecovery(scriptContent, targets, scriptName);
+                            
+                            // Re-apply preprocessing to the fixed script
+                            scriptContent = applyScriptPreprocessing(scriptContent, scriptName);
+                            
                             // Clear the error and retry with the fixed script
                             rb_set_errinfo(Qnil);
                             VALUE fixedString = rb_utf8_str_new_cstr(scriptContent.c_str());
@@ -3355,7 +3464,7 @@ end
                             evalString(fixedString, fname, &retryState);
                             
                             if (retryState == 0) {
-                                fprintf(stderr, "[MKXP-Z] [%03ld/%ld] Fixed Invalid next/break in '%s' (replaced with return)\n", i, scriptCount, scriptName);
+                                fprintf(stderr, "[MKXP-Z] [%03ld/%ld] Fixed SyntaxError in '%s' (patched flagged line(s))\n", i, scriptCount, scriptName);
                                 continue;
                             } else {
                                 // Still failed after fix
