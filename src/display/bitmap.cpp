@@ -53,6 +53,7 @@
 
 #include <math.h>
 #include <algorithm>
+#include <vector>
 
 extern "C" {
 #include "libnsgif/libnsgif.h"
@@ -2109,6 +2110,218 @@ static inline void blendText(SDL_Surface *txtSrf, const SDL_Rect &inRect, const 
     }
 }
 
+struct HangulGlyphLayout
+{
+    uint32_t codepoint;
+    int minX;
+    int maxX;
+    int minY;
+    int maxY;
+    int advance;
+    int penX;
+};
+
+struct HangulGlyphBounds
+{
+    int minLeft = 0;
+    int maxRight = 0;
+    int top = 0;
+    int bottom = 0;
+};
+
+/* Shared fallback font metrics are a little too tight for Hangul, so we
+ * expand placement using per-glyph bounds when that fallback is active. */
+static bool isHangulCodepoint(uint32_t codepoint)
+{
+    return (codepoint >= 0x1100 && codepoint <= 0x11FF) ||
+           (codepoint >= 0x3130 && codepoint <= 0x318F) ||
+           (codepoint >= 0xA960 && codepoint <= 0xA97F) ||
+           (codepoint >= 0xAC00 && codepoint <= 0xD7AF) ||
+           (codepoint >= 0xD7B0 && codepoint <= 0xD7FF);
+}
+
+static uint32_t utf8_to_codepoint(const char *_input,
+                                  const char **end_ptr)
+{
+    const unsigned char *input =
+    reinterpret_cast<const unsigned char*>(_input);
+    *end_ptr = _input;
+
+    if (input[0] == 0)
+        return static_cast<uint32_t>(-1);
+
+    if (input[0] < 0x80)
+    {
+        *end_ptr = _input + 1;
+        return input[0];
+    }
+
+    if ((input[0] & 0xF8) == 0xF0)
+    {
+        if (input[1] == 0 || input[2] == 0 || input[3] == 0)
+            return static_cast<uint32_t>(-1);
+
+        *end_ptr = _input + 4;
+
+        return (input[0] & 0x07) << 18 |
+               (input[1] & 0x3F) << 12 |
+               (input[2] & 0x3F) << 6  |
+               (input[3] & 0x3F);
+    }
+
+    if ((input[0] & 0xF0) == 0xE0)
+    {
+        if (input[1] == 0 || input[2] == 0)
+            return static_cast<uint32_t>(-1);
+
+        *end_ptr = _input + 3;
+
+        return (input[0] & 0x0F) << 12 |
+               (input[1] & 0x3F) << 6  |
+               (input[2] & 0x3F);
+    }
+
+    if ((input[0] & 0xE0) == 0xC0)
+    {
+        if (input[1] == 0)
+            return static_cast<uint32_t>(-1);
+
+        *end_ptr = _input + 2;
+
+        return (input[0] & 0x1F) << 6  |
+               (input[1] & 0x3F);
+    }
+
+    return static_cast<uint32_t>(-1);
+}
+
+static bool stringContainsHangul(const char *str)
+{
+    for (const char *it = str; *it != '\0';)
+    {
+        const char *endPtr;
+        uint32_t codepoint = utf8_to_codepoint(it, &endPtr);
+
+        if (codepoint == static_cast<uint32_t>(-1) || endPtr == it)
+        {
+            ++it;
+            continue;
+        }
+
+        if (isHangulCodepoint(codepoint))
+            return true;
+
+        it = endPtr;
+    }
+
+    return false;
+}
+
+static bool needsHangulFallbackSpacing(const Font *font, const char *str)
+{
+    return font && font->usesBundledFallback() && stringContainsHangul(str);
+}
+
+static bool layoutHangulGlyphs(TTF_Font *font, const char *str, int extraSpacing,
+                               std::vector<HangulGlyphLayout> *glyphs,
+                               HangulGlyphBounds &bounds)
+{
+    int penX = 0;
+    bool hasGlyph = false;
+
+    for (const char *it = str; *it != '\0';)
+    {
+        const char *endPtr;
+        uint32_t codepoint = utf8_to_codepoint(it, &endPtr);
+
+        if (codepoint == static_cast<uint32_t>(-1) || endPtr == it)
+        {
+            codepoint = static_cast<unsigned char>(*it);
+            endPtr = it + 1;
+        }
+
+        int minX = 0;
+        int maxX = 0;
+        int minY = 0;
+        int maxY = 0;
+        int advance = 0;
+
+        if (TTF_GlyphMetrics32(font, codepoint, &minX, &maxX, &minY, &maxY, &advance) != 0)
+            return false;
+
+        if (glyphs)
+            glyphs->push_back({codepoint, minX, maxX, minY, maxY, advance, penX});
+
+        bounds.minLeft = std::min(bounds.minLeft, penX + minX);
+        bounds.maxRight = std::max(bounds.maxRight, penX + std::max(advance, maxX));
+        bounds.top = hasGlyph ? std::max(bounds.top, maxY) : maxY;
+        bounds.bottom = hasGlyph ? std::min(bounds.bottom, minY) : minY;
+        hasGlyph = true;
+
+        int step = std::max(advance, 0);
+
+        if (isHangulCodepoint(codepoint))
+            step = std::max(step, maxX + extraSpacing);
+
+        penX += step;
+        it = endPtr;
+    }
+
+    return hasGlyph;
+}
+
+static SDL_Surface *renderUTF8WithHangulFallbackSpacing(TTF_Font *font,
+                                                        const char *str,
+                                                        const SDL_Color &color,
+                                                        bool solid,
+                                                        int extraSpacing)
+{
+    std::vector<HangulGlyphLayout> glyphs;
+    HangulGlyphBounds bounds;
+
+    if (!layoutHangulGlyphs(font, str, extraSpacing, &glyphs, bounds))
+        return nullptr;
+
+    int surfaceWidth = std::max(bounds.maxRight - bounds.minLeft, 1);
+    int baselineY = std::max(TTF_FontAscent(font), bounds.top);
+    int surfaceHeight = std::max(std::max(TTF_FontHeight(font), baselineY - bounds.bottom), 1);
+
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, surfaceWidth, surfaceHeight,
+                                                          32, SDL_PIXELFORMAT_ABGR8888);
+
+    if (!surface)
+        return nullptr;
+
+    SDL_SetSurfaceBlendMode(surface, SDL_BLENDMODE_BLEND);
+    SDL_FillRect(surface, nullptr, SDL_MapRGBA(surface->format, 0, 0, 0, 0));
+
+    for (const HangulGlyphLayout &glyph : glyphs)
+    {
+        SDL_Surface *glyphSurface = solid
+            ? TTF_RenderGlyph32_Solid(font, glyph.codepoint, color)
+            : TTF_RenderGlyph32_Blended(font, glyph.codepoint, color);
+
+        if (!glyphSurface)
+        {
+            SDL_FreeSurface(surface);
+            return nullptr;
+        }
+
+        SDL_Rect dstRect = {
+            glyph.penX + glyph.minX - bounds.minLeft,
+            baselineY - glyph.maxY,
+            glyphSurface->w,
+            glyphSurface->h
+        };
+
+        SDL_SetSurfaceBlendMode(glyphSurface, SDL_BLENDMODE_BLEND);
+        SDL_BlitSurface(glyphSurface, nullptr, surface, &dstRect);
+        SDL_FreeSurface(glyphSurface);
+    }
+
+    return surface;
+}
+
 void Bitmap::drawText(const IntRect &rect, const char *str, int align)
 {
     guardDisposed();
@@ -2269,11 +2482,20 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
     }
     
     SDL_Surface *txtSurf;
-    
-    if (p->font->isSolid())
-        txtSurf = TTF_RenderUTF8_Solid(sdlFont, str, c);
+    const bool useHangulFallbackSpacing = needsHangulFallbackSpacing(p->font, str);
+
+    if (useHangulFallbackSpacing)
+        txtSurf = renderUTF8WithHangulFallbackSpacing(sdlFont, str, c, p->font->isSolid(), 1);
     else
-        txtSurf = TTF_RenderUTF8_Blended(sdlFont, str, c);
+        txtSurf = nullptr;
+
+    if (!txtSurf)
+    {
+        if (p->font->isSolid())
+            txtSurf = TTF_RenderUTF8_Solid(sdlFont, str, c);
+        else
+            txtSurf = TTF_RenderUTF8_Blended(sdlFont, str, c);
+    }
     
     if (!txtSurf)
         throw Exception(Exception::SDLError, "Error creating text: %s",
@@ -2334,10 +2556,18 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
             SDL_FreeSurface(txtSurf);
             throw e;
         }
-        if (p->font->isSolid())
-            outline = TTF_RenderUTF8_Solid(sdlOutline, str, co);
+        if (useHangulFallbackSpacing)
+            outline = renderUTF8WithHangulFallbackSpacing(sdlOutline, str, co, p->font->isSolid(), 1);
         else
-            outline = TTF_RenderUTF8_Blended(sdlOutline, str, co);
+            outline = nullptr;
+
+        if (!outline)
+        {
+            if (p->font->isSolid())
+                outline = TTF_RenderUTF8_Solid(sdlOutline, str, co);
+            else
+                outline = TTF_RenderUTF8_Blended(sdlOutline, str, co);
+        }
         
         if (!outline) {
             SDL_FreeSurface(txtSurf);
@@ -2384,50 +2614,6 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
     stretchBlt(destRect, txtBitmap, sourceRect, 255, smooth);
 }
 
-/* http://www.lemoda.net/c/utf8-to-ucs2/index.html */
-static uint16_t utf8_to_ucs2(const char *_input,
-                             const char **end_ptr)
-{
-    const unsigned char *input =
-    reinterpret_cast<const unsigned char*>(_input);
-    *end_ptr = _input;
-    
-    if (input[0] == 0)
-        return -1;
-    
-    if (input[0] < 0x80)
-    {
-        *end_ptr = _input + 1;
-        
-        return input[0];
-    }
-    
-    if ((input[0] & 0xE0) == 0xE0)
-    {
-        if (input[1] == 0 || input[2] == 0)
-            return -1;
-        
-        *end_ptr = _input + 3;
-        
-        return (input[0] & 0x0F)<<12 |
-        (input[1] & 0x3F)<<6  |
-        (input[2] & 0x3F);
-    }
-    
-    if ((input[0] & 0xC0) == 0xC0)
-    {
-        if (input[1] == 0)
-            return -1;
-        
-        *end_ptr = _input + 2;
-        
-        return (input[0] & 0x1F)<<6  |
-        (input[1] & 0x3F);
-    }
-    
-    return -1;
-}
-
 IntRect Bitmap::textSize(const char *str)
 {
     guardDisposed();
@@ -2444,23 +2630,37 @@ IntRect Bitmap::textSize(const char *str)
     // a pixel wider than it should be. Adding a space at the end and then
     // removing it's width should make character-by-character text
     // more accurate.
-    std::string fixed = fixupString(str) + " ";
+    std::string fixedBase = fixupString(str);
+    std::string fixed = fixedBase + " ";
     
     int w, h;
     TTF_SizeUTF8(sdlFont, fixed.c_str(), &w, &h);
-    
-    int ws;
-    TTF_SizeUTF8(sdlFont, " ", &ws, 0);
-    w -= ws;
+    const bool useHangulFallbackSpacing = needsHangulFallbackSpacing(p->font, fixedBase.c_str());
+
+    if (useHangulFallbackSpacing)
+    {
+        HangulGlyphBounds bounds;
+        if (layoutHangulGlyphs(sdlFont, fixedBase.c_str(), 1, nullptr, bounds))
+        {
+            w = std::max(bounds.maxRight - bounds.minLeft, 0);
+            h = std::max(bounds.top - bounds.bottom, h);
+        }
+    }
+    else
+    {
+        int ws;
+        TTF_SizeUTF8(sdlFont, " ", &ws, 0);
+        w -= ws;
+    }
     
     /* If str is one character long, *endPtr == 0 */
     const char *endPtr;
-    uint16_t ucs2 = utf8_to_ucs2(str, &endPtr);
+    uint32_t ucs2 = utf8_to_codepoint(fixedBase.c_str(), &endPtr);
     
     /* For cursive characters, returning the advance
      * as width yields better results */
     if (p->font->getItalic() && *endPtr == '\0')
-        TTF_GlyphMetrics(sdlFont, ucs2, 0, 0, 0, 0, &w);
+        TTF_GlyphMetrics32(sdlFont, ucs2, 0, 0, 0, 0, &w);
 
     if (shState->config().fontHeightReporting == 0) {
         if(!w) {

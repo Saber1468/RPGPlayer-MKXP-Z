@@ -774,6 +774,11 @@ bool Font::isSolid() const {
     return p->isSolid;
 }
 
+bool Font::usesBundledFallback() const
+{
+    return p->name.empty();
+}
+
 bool Font::doesExist(const char *name)
 {
 	if (!name)

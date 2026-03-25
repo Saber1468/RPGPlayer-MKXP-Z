@@ -107,6 +107,7 @@ public:
 
 	static const std::vector<std::string> &getInitialDefaultNames();
     bool isSolid() const;
+    bool usesBundledFallback() const;
 
 	/* Assigns heap allocated objects to object properties;
 	 * using this in pure C++ will cause memory leaks
