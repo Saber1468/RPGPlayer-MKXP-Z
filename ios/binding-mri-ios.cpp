@@ -2008,7 +2008,87 @@ struct BacktraceData {
  * 
  * Note: This is a best-effort conversion. Complex edge cases might not be handled.
  */
-static std::string preprocessRuby18Syntax(const std::string& script) {
+static std::string sanitizeRegexLiteralByteEscapes(const std::string& script, const char* scriptName) {
+    if (script.empty())
+        return script;
+
+    std::string result = script;
+    int modifiedRegexCount = 0;
+
+    auto appendBinaryFlagToExactLiteral = [&](const std::string &literal) {
+        size_t pos = 0;
+        while ((pos = result.find(literal, pos)) != std::string::npos) {
+            size_t flagStart = pos + literal.length();
+            size_t flagEnd = flagStart;
+
+            while (flagEnd < result.length()) {
+                char flag = result[flagEnd];
+                if (flag != 'm' && flag != 'i' && flag != 'x' && flag != 'o' &&
+                    flag != 'u' && flag != 'n' && flag != 'e' && flag != 's') {
+                    break;
+                }
+                flagEnd++;
+            }
+
+            if (result.substr(flagStart, flagEnd - flagStart).find('n') == std::string::npos) {
+                result.insert(flagEnd, "n");
+                modifiedRegexCount++;
+                flagEnd++;
+            }
+
+            pos = flagEnd;
+        }
+    };
+
+    // Ruby 3.x is strict about byte-oriented \xNN escapes in UTF-8 regex literals.
+    // Legacy RGSS scripts often rely on regexes such as:
+    //   /[\x00-\x1f\x7f-\x9f]/
+    //   /\x80|\x81/
+    // We keep the pattern body intact and add the binary-regex flag ('n').
+    try {
+        std::regex byteEscapeRegexLiteral(
+            R"(/((\\.|[^/\r\n])*(\\x00-\\x1f|\\x7f-\\x9f|\\x[89A-Fa-f][0-9A-Fa-f])(\\.|[^/\r\n])*)/([mixounes]*))");
+        std::string rebuilt;
+        std::size_t lastPos = 0;
+
+        for (std::sregex_iterator it(result.begin(), result.end(), byteEscapeRegexLiteral), end; it != end; ++it) {
+            const std::smatch& match = *it;
+            rebuilt.append(result, lastPos, static_cast<std::size_t>(match.position()) - lastPos);
+
+            std::string body = match[1].str();
+            std::string flags = match[5].str();
+            if (flags.find('n') == std::string::npos) {
+                flags += 'n';
+                modifiedRegexCount++;
+            }
+
+            rebuilt += "/";
+            rebuilt += body;
+            rebuilt += "/";
+            rebuilt += flags;
+
+            lastPos = static_cast<std::size_t>(match.position() + match.length());
+        }
+
+        rebuilt.append(result, lastPos, std::string::npos);
+        result = rebuilt;
+
+    } catch (const std::regex_error& e) {
+        Debug() << "Multibyte escape patch regex error:" << e.what();
+    }
+
+    appendBinaryFlagToExactLiteral(R"(/"[^"\\\n\r\x00-\x1f\x7f-\x9f]*"/)");
+
+    if (modifiedRegexCount > 0) {
+        Debug() << "[MKXP-Z] Regex byte-escape compat: Added 'n' flag to "
+                << modifiedRegexCount << " regex literal(s) in script '"
+                << (scriptName ? scriptName : "<unknown>") << "'";
+    }
+
+    return result;
+}
+
+static std::string preprocessRuby18Syntax(const std::string& script, const char* scriptName) {
     if (script.empty()) return script;
     
     std::string result = script;
@@ -2257,51 +2337,12 @@ static std::string preprocessRuby18Syntax(const std::string& script) {
         }
         
     } catch (const std::regex_error& e) {
-        // If regex fails, just return original script
+        // If earlier preprocessing fails, still try the byte-escape regex compat path.
         Debug() << "Ruby 1.8 syntax preprocessor regex error:" << e.what();
-        return script;
+        return sanitizeRegexLiteralByteEscapes(script, scriptName);
     }
-    
-    // =========================================================================
-    // 4. Sanitize invalid multibyte escapes in regexes
-    // =========================================================================
-    // Ruby 3.x is strict about high-byte \xNN escapes in UTF-8 regex literals.
-    // Legacy RGSS scripts often rely on byte-oriented regexes such as:
-    //   /\x7f-\x9f/
-    //   /\x80|\x81/
-    // The safest compatibility fix is to keep the original pattern body but
-    // add the binary-regex flag ('n') so Ruby parses it as byte data.
-    try {
-        std::regex highByteRegexLiteral(
-            R"(/((\\.|[^/\r\n])*(\\x[89A-Fa-f][0-9A-Fa-f]|\\x7f-\\x9f)(\\.|[^/\r\n])*)/([mixounes]*))");
-        std::string rebuilt;
-        std::size_t lastPos = 0;
 
-        for (std::sregex_iterator it(result.begin(), result.end(), highByteRegexLiteral), end; it != end; ++it) {
-            const std::smatch& match = *it;
-            rebuilt.append(result, lastPos, static_cast<std::size_t>(match.position()) - lastPos);
-
-            std::string body = match[1].str();
-            std::string flags = match[5].str();
-            if (flags.find('n') == std::string::npos) {
-                flags += 'n';
-            }
-
-            rebuilt += "/";
-            rebuilt += body;
-            rebuilt += "/";
-            rebuilt += flags;
-
-            lastPos = static_cast<std::size_t>(match.position() + match.length());
-        }
-
-        rebuilt.append(result, lastPos, std::string::npos);
-        result = rebuilt;
-    } catch (const std::regex_error& e) {
-         Debug() << "Multibyte escape patch regex error:" << e.what();
-    }
-    
-    return result;
+    return sanitizeRegexLiteralByteEscapes(result, scriptName);
 }
 
 // Ruby 3.x compatibility: Check if script uses @@class_variables in toplevel class << self blocks
@@ -3222,7 +3263,7 @@ static std::string fixSpecificScriptErrors(const std::string &script, const char
 static std::string applyScriptPreprocessing(const std::string& script, const std::string& scriptName) {
     if (script.empty()) return script;
     
-    std::string processedScript = preprocessRuby18Syntax(script);
+    std::string processedScript = preprocessRuby18Syntax(script, scriptName.c_str());
     
     if (needsRetrySyntaxFix(processedScript)) {
         processedScript = fixRetrySyntax(processedScript, scriptName.c_str());
