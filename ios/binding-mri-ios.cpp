@@ -60,6 +60,7 @@ extern "C" {
 #include <regex>
 #include <zlib.h>
 #include <ctime>
+#include <cctype>
 #include <cstdarg>
 #include <cstdlib>
 
@@ -77,6 +78,148 @@ static VALUE topSelf;
 static void mriBindingExecute();
 static void mriBindingTerminate();
 static void mriBindingReset();
+
+// Forward declarations for static Ruby extensions (C functions from libruby.a)
+extern "C" void Init_zlib(void);
+extern "C" void Init_enc(void);
+extern "C" void Init_encdb(void);
+extern "C" void Init_Encoding(void);
+extern "C" void Init_encodings(void);
+extern "C" void Init_transdb(void);
+extern "C" void ruby_init_ext(const char *name, void (*init)(void));
+extern "C" void rb_provide(const char *feature);
+
+#define MKXPZ_STATIC_RUBY_ENCODING_INIT_LIST(X) \
+    X(euc_jp) \
+    X(euc_kr) \
+    X(euc_tw) \
+    X(iso_8859_1) \
+    X(iso_8859_2) \
+    X(iso_8859_3) \
+    X(iso_8859_4) \
+    X(iso_8859_5) \
+    X(iso_8859_6) \
+    X(iso_8859_7) \
+    X(iso_8859_8) \
+    X(iso_8859_9) \
+    X(iso_8859_10) \
+    X(iso_8859_11) \
+    X(iso_8859_13) \
+    X(iso_8859_14) \
+    X(iso_8859_15) \
+    X(iso_8859_16) \
+    X(shift_jis) \
+    X(utf_16be) \
+    X(utf_16le) \
+    X(utf_32be) \
+    X(utf_32le) \
+    X(windows_31j) \
+    X(windows_1250) \
+    X(windows_1251) \
+    X(windows_1252) \
+    X(windows_1253) \
+    X(windows_1254) \
+    X(windows_1257)
+
+#define MKXPZ_STATIC_RUBY_TRANSCODER_INIT_LIST(X) \
+    X(trans_big5) \
+    X(trans_cesu_8) \
+    X(trans_chinese) \
+    X(trans_ebcdic) \
+    X(trans_emoji) \
+    X(trans_emoji_iso2022_kddi) \
+    X(trans_emoji_sjis_docomo) \
+    X(trans_emoji_sjis_kddi) \
+    X(trans_emoji_sjis_softbank) \
+    X(trans_escape) \
+    X(trans_gb18030) \
+    X(trans_gbk) \
+    X(trans_iso2022) \
+    X(trans_japanese) \
+    X(trans_japanese_euc) \
+    X(trans_japanese_sjis) \
+    X(trans_korean) \
+    X(trans_single_byte) \
+    X(trans_utf8_mac) \
+    X(trans_utf_16_32)
+
+#define MKXPZ_DECLARE_RUBY_INIT(name) extern "C" void Init_##name(void);
+MKXPZ_STATIC_RUBY_ENCODING_INIT_LIST(MKXPZ_DECLARE_RUBY_INIT)
+MKXPZ_STATIC_RUBY_TRANSCODER_INIT_LIST(MKXPZ_DECLARE_RUBY_INIT)
+#undef MKXPZ_DECLARE_RUBY_INIT
+
+namespace {
+struct StaticRubyExtension {
+    const char *feature;
+    void (*init)(void);
+};
+
+static void registerStaticRubyExtensions(const StaticRubyExtension *extensions, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        ruby_init_ext(extensions[i].feature, extensions[i].init);
+    }
+}
+
+static void initStaticRubyEncodingsForIOS() {
+    static bool encodingsInitialized = false;
+    if (encodingsInitialized) {
+        return;
+    }
+
+    encodingsInitialized = true;
+
+    Init_encdb();
+    rb_provide("encdb.so");
+    rb_provide("enc/encdb.so");
+
+    static const StaticRubyExtension kEncodingExtensions[] = {
+#define MKXPZ_REGISTER_ENCODING(name) { "enc/" #name ".so", Init_##name },
+        MKXPZ_STATIC_RUBY_ENCODING_INIT_LIST(MKXPZ_REGISTER_ENCODING)
+#undef MKXPZ_REGISTER_ENCODING
+    };
+    registerStaticRubyExtensions(
+        kEncodingExtensions,
+        sizeof(kEncodingExtensions) / sizeof(kEncodingExtensions[0])
+    );
+
+    Init_transdb();
+    rb_provide("trans/transdb.so");
+    rb_provide("enc/trans/transdb.so");
+
+    static const StaticRubyExtension kTranscoderExtensions[] = {
+#define MKXPZ_REGISTER_TRANSCODER(name) { "enc/trans/" #name ".so", Init_##name },
+        MKXPZ_STATIC_RUBY_TRANSCODER_INIT_LIST(MKXPZ_REGISTER_TRANSCODER)
+#undef MKXPZ_REGISTER_TRANSCODER
+    };
+    registerStaticRubyExtensions(
+        kTranscoderExtensions,
+        sizeof(kTranscoderExtensions) / sizeof(kTranscoderExtensions[0])
+    );
+
+    int state = 0;
+    rb_eval_string_protect(
+        "Encoding.find('EUC-JP')\n"
+        "Encoding.find('Shift_JIS')\n"
+        "Encoding.find('Windows-31J')\n",
+        &state
+    );
+
+    if (state == 0) {
+        Debug() << "Static Ruby encodings initialized directly for iOS";
+        return;
+    }
+
+    VALUE err = rb_errinfo();
+    if (NIL_P(err)) {
+        Debug() << "Warning: Static Ruby encoding bootstrap sanity check failed";
+    } else {
+        VALUE msg = rb_funcall(err, rb_intern("message"), 0);
+        Debug() << "Warning: Static Ruby encoding bootstrap sanity check failed:"
+                << StringValueCStr(msg);
+    }
+    rb_set_errinfo(Qnil);
+}
+} // namespace
 
 ScriptBinding scriptBindingImpl = {mriBindingExecute, mriBindingTerminate,
     mriBindingReset};
@@ -100,12 +243,6 @@ void audioBindingInit();
 void graphicsBindingInit();
 
 void fileIntBindingInit();
-
-// Forward declarations for static Ruby extensions (C functions from libruby.a)
-extern "C" void Init_zlib(void);
-extern "C" void Init_enc(void);
-extern "C" void Init_Encoding(void);
-extern "C" void Init_encodings(void);
 
 #ifdef MKXPZ_MINIFFI
 void MiniFFIBindingInit();
@@ -306,9 +443,8 @@ static void mriBindingInit() {
     rb_str_freeze(vers);
     rb_define_const(mod, "VERSION", vers);
     
-    // For iOS with statically linked Ruby extensions, initialize zlib directly
-    // The require mechanism doesn't work properly with static extensions on iOS
-    // Note: Encoding is already initialized by ruby_init(), don't call Init_enc/Init_Encoding/Init_encodings
+    // For iOS with statically linked Ruby extensions, initialize zlib directly.
+    // Legacy encoding/transcoder bootstrap is handled once during Ruby VM startup.
     Init_zlib();
     Debug() << "Zlib initialized directly for static linking (StringIO will be polyfilled)";
     
@@ -2252,17 +2388,399 @@ static bool needsClassVariableCompat(const std::string &script) {
     return false;
 }
 
-// Wrap script in Object.class_eval to provide class variable context for Ruby 3.x
+static bool isRubyIdentifierChar(char ch) {
+    unsigned char uch = static_cast<unsigned char>(ch);
+    return std::isalnum(uch) || ch == '_';
+}
+
+static bool hasCollectedClassVariable(const std::vector<std::string> &classVariables,
+                                      const std::string &candidate) {
+    for (const auto &classVariable : classVariables) {
+        if (classVariable == candidate)
+            return true;
+    }
+
+    return false;
+}
+
+static void collectClassVariablesFromLine(const std::string &line,
+                                          std::vector<std::string> &classVariables) {
+    bool inSingleQuote = false;
+    bool inDoubleQuote = false;
+    bool escaping = false;
+
+    size_t pos = 0;
+    while (pos < line.size()) {
+        char current = line[pos];
+
+        if (escaping) {
+            escaping = false;
+            pos++;
+            continue;
+        }
+
+        if (inSingleQuote || inDoubleQuote) {
+            if (current == '\\') {
+                escaping = true;
+            } else if ((inSingleQuote && current == '\'') || (inDoubleQuote && current == '"')) {
+                inSingleQuote = false;
+                inDoubleQuote = false;
+            }
+
+            pos++;
+            continue;
+        }
+
+        if (current == '#')
+            break;
+
+        if (current == '\'') {
+            inSingleQuote = true;
+            pos++;
+            continue;
+        }
+
+        if (current == '"') {
+            inDoubleQuote = true;
+            pos++;
+            continue;
+        }
+
+        if (current == '@' && pos + 1 < line.size() && line[pos + 1] == '@') {
+            bool prevOk = (pos == 0 || (!isRubyIdentifierChar(line[pos - 1]) && line[pos - 1] != ':'));
+            if (!prevOk) {
+                pos += 2;
+                continue;
+            }
+
+            size_t varEnd = pos + 2;
+            while (varEnd < line.size() && isRubyIdentifierChar(line[varEnd]))
+                varEnd++;
+
+            if (varEnd > pos + 2) {
+                std::string classVariable = line.substr(pos, varEnd - pos);
+                if (!hasCollectedClassVariable(classVariables, classVariable))
+                    classVariables.push_back(classVariable);
+                pos = varEnd;
+                continue;
+            }
+        }
+
+        pos++;
+    }
+}
+
+static std::string rewriteSingletonClassVariableLine(const std::string &line,
+                                                     const std::string &identifier,
+                                                     const std::vector<std::string> &classVariables,
+                                                     int &replacementCount) {
+    if (classVariables.empty())
+        return line;
+
+    std::string rewritten;
+    rewritten.reserve(line.size() + 64);
+
+    bool inSingleQuote = false;
+    bool inDoubleQuote = false;
+    bool escaping = false;
+
+    size_t pos = 0;
+    while (pos < line.size()) {
+        char current = line[pos];
+
+        if (escaping) {
+            rewritten += current;
+            escaping = false;
+            pos++;
+            continue;
+        }
+
+        if (inSingleQuote || inDoubleQuote) {
+            rewritten += current;
+
+            if (current == '\\') {
+                escaping = true;
+            } else if ((inSingleQuote && current == '\'') || (inDoubleQuote && current == '"')) {
+                inSingleQuote = false;
+                inDoubleQuote = false;
+            }
+
+            pos++;
+            continue;
+        }
+
+        if (current == '#') {
+            rewritten.append(line.substr(pos));
+            break;
+        }
+
+        if (current == '\'') {
+            inSingleQuote = true;
+            rewritten += current;
+            pos++;
+            continue;
+        }
+
+        if (current == '"') {
+            inDoubleQuote = true;
+            rewritten += current;
+            pos++;
+            continue;
+        }
+
+        if (current == '@' && pos + 1 < line.size() && line[pos + 1] == '@') {
+            bool prevOk = (pos == 0 || (!isRubyIdentifierChar(line[pos - 1]) && line[pos - 1] != ':'));
+            if (!prevOk) {
+                rewritten += current;
+                pos++;
+                continue;
+            }
+
+            size_t varEnd = pos + 2;
+            while (varEnd < line.size() && isRubyIdentifierChar(line[varEnd]))
+                varEnd++;
+
+            if (varEnd > pos + 2) {
+                std::string classVariable = line.substr(pos, varEnd - pos);
+                if (hasCollectedClassVariable(classVariables, classVariable)) {
+                    rewritten += identifier + ".class_variable_get(:" + classVariable + ")";
+                    replacementCount++;
+                    pos = varEnd;
+                    continue;
+                }
+            }
+        }
+
+        rewritten += current;
+        pos++;
+    }
+
+    return rewritten;
+}
+
+// Ruby 3.x compat: Fix @@class_variables inside class << IDENTIFIER singleton blocks.
+// In Ruby 3.x, assigning or reading @@ inside a singleton class raises RuntimeError:
+//   "class variable access from toplevel"
+// This function hoists direct @@var = ... initializers and rewrites remaining @@var
+// references inside the singleton block to IDENTIFIER.class_variable_get(:@@var).
 static std::string wrapScriptForClassVariableCompat(const std::string &script, const char* scriptName) {
-    std::string wrapped;
-    wrapped.reserve(script.length() + 100);
-    wrapped = "Object.class_eval do\n";
-    wrapped += script;
-    wrapped += "\nend\n";
-    
-    Debug() << "[MKXP-Z] Ruby 3.x compat: Wrapped script '" << scriptName << "' for class variable access";
-    
-    return wrapped;
+    std::string result = script;
+    int assignmentPatchCount = 0;
+    int referencePatchCount = 0;
+
+    size_t searchStart = 0;
+    while (searchStart < result.length()) {
+        // Find "class <<" pattern
+        size_t classPos = result.find("class <<", searchStart);
+        if (classPos == std::string::npos) break;
+
+        // Make sure it is not inside a string literal or comment (basic check)
+        // Check preceding char is newline/space/start (not inside a word)
+        if (classPos > 0) {
+            char prev = result[classPos - 1];
+            if (isalnum(prev) || prev == '_') {
+                searchStart = classPos + 8;
+                continue;
+            }
+        }
+
+        // Extract the IDENTIFIER (e.g. Input, SceneManager, self)
+        size_t afterLt = classPos + 8; // skip "class <<"
+        while (afterLt < result.length() && result[afterLt] == ' ') afterLt++;
+        size_t identStart = afterLt;
+        size_t identEnd = identStart;
+        while (identEnd < result.length() && (isalnum(result[identEnd]) || result[identEnd] == '_'))
+            identEnd++;
+
+        if (identEnd == identStart) { searchStart = classPos + 8; continue; }
+
+        std::string identifier = result.substr(identStart, identEnd - identStart);
+
+        // Skip "self" - it does not carry class variables in the same sense
+        if (identifier == "self") { searchStart = identEnd; continue; }
+
+        // Find end of singleton block (track depth)
+        size_t blockStart = identEnd;
+        // Advance to the end of the line that starts the block
+        while (blockStart < result.length() && result[blockStart] != '\n') blockStart++;
+        if (blockStart < result.length()) blockStart++; // skip \n
+
+        int depth = 1;
+        size_t pos = blockStart;
+        size_t blockEnd = std::string::npos;
+
+        while (pos < result.length() && depth > 0) {
+            // Skip string literals
+            if (result[pos] == '"' || result[pos] == '\'') {
+                char q = result[pos++];
+                while (pos < result.length() && result[pos] != q) {
+                    if (result[pos] == '\\') pos++;
+                    pos++;
+                }
+                if (pos < result.length()) pos++;
+                continue;
+            }
+            // Skip comments
+            if (result[pos] == '#') {
+                while (pos < result.length() && result[pos] != '\n') pos++;
+                continue;
+            }
+            // Block openers
+            static const char* openers[] = {"class", "module", "def", "begin", "do", "if", "unless", "while", "until", "for", "case", nullptr};
+            bool opened = false;
+            for (int k = 0; openers[k]; k++) {
+                size_t klen = strlen(openers[k]);
+                if (result.substr(pos, klen) == openers[k]) {
+                    bool prevOk = (pos == 0 || !isalnum(result[pos-1]) && result[pos-1] != '_');
+                    bool nextOk = (pos + klen >= result.length() || !isalnum(result[pos+klen]) && result[pos+klen] != '_');
+                    if (prevOk && nextOk) {
+                        // Modifier form (trailing if/unless/while/until) - skip
+                        if (std::string(openers[k]) == "if" || std::string(openers[k]) == "unless" ||
+                            std::string(openers[k]) == "while" || std::string(openers[k]) == "until") {
+                            size_t back = pos;
+                            while (back > 0 && (result[back-1] == ' ' || result[back-1] == '\t')) back--;
+                            if (back > 0 && result[back-1] != '\n' && result[back-1] != ';') {
+                                pos += klen; opened = true; break;
+                            }
+                        }
+                        depth++; pos += klen; opened = true; break;
+                    }
+                }
+            }
+            if (opened) continue;
+            // "end" closes a block
+            if (result.substr(pos, 3) == "end") {
+                bool prevOk = (pos == 0 || !isalnum(result[pos-1]) && result[pos-1] != '_');
+                bool nextOk = (pos + 3 >= result.length() || !isalnum(result[pos+3]) && result[pos+3] != '_');
+                if (prevOk && nextOk) {
+                    depth--;
+                    if (depth == 0) { blockEnd = pos; break; }
+                    pos += 3; continue;
+                }
+            }
+            pos++;
+        }
+
+        if (blockEnd == std::string::npos) { searchStart = identEnd; continue; }
+
+        // Scan block body for @@ assignment lines
+        // Pattern: leading whitespace, @@identifier, optional spaces, =, not another =
+        std::string injections;
+        std::vector<std::string> blockClassVariables;
+        int blockAssignmentPatchCount = 0;
+        size_t scanPos = blockStart;
+        while (scanPos < blockEnd) {
+            // Find next line beginning
+            size_t lineStart = scanPos;
+            size_t lineEnd = result.find('\n', lineStart);
+            if (lineEnd == std::string::npos || lineEnd > blockEnd) lineEnd = blockEnd;
+
+            std::string line = result.substr(lineStart, lineEnd - lineStart);
+            collectClassVariablesFromLine(line, blockClassVariables);
+
+            // Trim leading whitespace for matching
+            size_t trimPos = 0;
+            while (trimPos < line.size() && (line[trimPos] == ' ' || line[trimPos] == '\t')) trimPos++;
+
+            if (trimPos + 2 < line.size() && line[trimPos] == '@' && line[trimPos+1] == '@') {
+                // Read variable name
+                size_t varStart = trimPos;
+                size_t varEnd = varStart + 2;
+                while (varEnd < line.size() && (isalnum(line[varEnd]) || line[varEnd] == '_')) varEnd++;
+                std::string varName = line.substr(varStart, varEnd - varStart);
+
+                // Check it is an assignment (= but not ==)
+                size_t eqPos = varEnd;
+                while (eqPos < line.size() && (line[eqPos] == ' ' || line[eqPos] == '\t')) eqPos++;
+                if (eqPos < line.size() && line[eqPos] == '=' && (eqPos+1 >= line.size() || line[eqPos+1] != '=')) {
+                    // Found @@var = value assignment
+                    std::string rhs = line.substr(eqPos + 1);
+                    // Trim leading space from rhs
+                    size_t rhsTrim = 0;
+                    while (rhsTrim < rhs.size() && (rhs[rhsTrim] == ' ' || rhs[rhsTrim] == '\t')) rhsTrim++;
+                    rhs = rhs.substr(rhsTrim);
+
+                    // Build class_variable_set call
+                    std::string injection = identifier + ".class_variable_set(:" + varName + ", " + rhs + ")";
+                    injections += injection + "\n";
+
+                    // Comment out the original line inside the block
+                    result.replace(lineStart, lineEnd - lineStart, "# [MKXP-Z] moved: " + line.substr(trimPos));
+                    // Recalculate blockEnd shift
+                    size_t newLineEnd = result.find('\n', lineStart);
+                    if (newLineEnd == std::string::npos) newLineEnd = result.length();
+                    size_t lineLenDiff = (newLineEnd - lineStart) - (lineEnd - lineStart);
+                    blockEnd += lineLenDiff;
+
+                    assignmentPatchCount++;
+                    blockAssignmentPatchCount++;
+                    scanPos = newLineEnd + 1;
+                    continue;
+                }
+            }
+            scanPos = lineEnd + 1;
+        }
+
+        if (!blockClassVariables.empty()) {
+            std::string originalBody = result.substr(blockStart, blockEnd - blockStart);
+            std::string rewrittenBody;
+            rewrittenBody.reserve(originalBody.size() + 64);
+
+            int blockReferencePatchCount = 0;
+            size_t bodyPos = 0;
+            while (bodyPos < originalBody.size()) {
+                size_t lineBreakPos = originalBody.find('\n', bodyPos);
+                bool hasNewline = (lineBreakPos != std::string::npos);
+                size_t lineEndPos = hasNewline ? lineBreakPos : originalBody.size();
+
+                std::string line = originalBody.substr(bodyPos, lineEndPos - bodyPos);
+                rewrittenBody += rewriteSingletonClassVariableLine(line, identifier,
+                                                                   blockClassVariables,
+                                                                   blockReferencePatchCount);
+                if (hasNewline)
+                    rewrittenBody += '\n';
+
+                bodyPos = hasNewline ? (lineBreakPos + 1) : originalBody.size();
+            }
+
+            if (rewrittenBody != originalBody) {
+                result.replace(blockStart, blockEnd - blockStart, rewrittenBody);
+                blockEnd = blockStart + rewrittenBody.length();
+            }
+
+            if (blockReferencePatchCount > 0) {
+                referencePatchCount += blockReferencePatchCount;
+                Debug() << "[MKXP-Z] Ruby 3.x compat: Rewrote "
+                        << blockReferencePatchCount << " class variable reference(s) inside class << "
+                        << identifier << " singleton block in script '" << scriptName << "'";
+            }
+        }
+
+        if (!injections.empty()) {
+            // Prepend injections before the "class <<" line
+            result.insert(classPos, injections);
+            blockEnd += injections.length();
+            classPos += injections.length();
+            Debug() << "[MKXP-Z] Ruby 3.x compat: Hoisted " << blockAssignmentPatchCount
+                    << " class variable(s) from class << " << identifier
+                    << " singleton block in script '" << scriptName << "'";
+        }
+
+        searchStart = blockEnd + 3; // skip past "end"
+    }
+
+    if (assignmentPatchCount == 0 && referencePatchCount == 0) {
+        // Fallback: original Object.class_eval wrap
+        std::string wrapped;
+        wrapped.reserve(script.length() + 100);
+        wrapped = "Object.class_eval do\n";
+        wrapped += script;
+        wrapped += "\nend\n";
+        Debug() << "[MKXP-Z] Ruby 3.x compat: Wrapped script '" << scriptName << "' in Object.class_eval (fallback)";
+        return wrapped;
+    }
+
+    return result;
 }
 
 // =========================================================================
@@ -3980,6 +4498,9 @@ static void mriBindingExecute() {
         MKXP_DEBUG_LOG("About to call ruby_init...");
         ruby_init();
         MKXP_DEBUG_LOG("ruby_init completed");
+
+        initStaticRubyEncodingsForIOS();
+        MKXP_DEBUG_LOG("Static Ruby encoding bootstrap completed");
         
         // Initialize statically linked Ruby extensions (including zlib)
         MKXP_DEBUG_LOG("About to call Init_ext for static extensions...");
