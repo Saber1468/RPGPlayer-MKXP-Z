@@ -41,6 +41,7 @@
 #include "eventthread.h"
 
 #include <vector>
+#include <unordered_map>
 #include "util/rapidcsv.h"
 
 extern "C" {
@@ -3329,15 +3330,27 @@ RB_METHOD_GUARD(mkxpPreprocessRubyScript) {
     
     static long dynamic_script_count = 0;
     dynamic_script_count++;
-    
+
     // Distinguish between plugin and folder scripts based on name/context if needed
     if (name != "(eval)") {
         fprintf(stderr, "[MKXP-Z] Dynamically loaded script [%ld]: %s\n", dynamic_script_count, name.c_str());
     } else {
-        // Only log small preview of eval block to prevent giant logs
+        // Only log small preview of eval block to prevent giant logs.
+        // Dedup by preview content: the same event command/movement
+        // route/script fires every frame in a running game, so logging
+        // every call inflates logs to GB. First time a preview is seen
+        // we log normally; second time we emit a one-shot "silenced"
+        // notice; after that, identical previews are silently skipped.
         std::string preview = script.substr(0, 30);
         std::replace(preview.begin(), preview.end(), '\n', ' ');
-        fprintf(stderr, "[MKXP-Z] Dynamically evaluated block [%ld]: %s...\n", dynamic_script_count, preview.c_str());
+        static std::unordered_map<std::string, int> eval_preview_seen;
+        int &c = eval_preview_seen[preview];
+        if (c == 0) {
+            fprintf(stderr, "[MKXP-Z] Dynamically evaluated block [%ld]: %s...\n", dynamic_script_count, preview.c_str());
+        } else if (c == 1) {
+            fprintf(stderr, "[MKXP-Z] Dynamically evaluated block [%ld]: %s... (further identical previews silenced)\n", dynamic_script_count, preview.c_str());
+        }
+        c++;
     }
     
     return rb_utf8_str_new_cstr(processedScript.c_str());
