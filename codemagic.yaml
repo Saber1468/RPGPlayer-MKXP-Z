@@ -22,9 +22,9 @@ workflows:
           RANLIB=$(xcrun --sdk iphoneos --find ranlib)
           STRIP=$(xcrun --sdk iphoneos --find strip)
 
-          DEPS_DIR="$CODEMAGIC_BUILD_DIR/deps/ios_dist"
+          DEPS_DIR="$CM_BUILD_DIR/deps/ios_dist"
           XCFW_DIR="$DEPS_DIR/xcframeworks"
-          BUILD_DIR="$CODEMAGIC_BUILD_DIR/deps_build"
+          BUILD_DIR="$CM_BUILD_DIR/deps_build"
           mkdir -p "$DEPS_DIR/include" "$DEPS_DIR/lib/device" "$XCFW_DIR" "$BUILD_DIR"
 
           COMMON_CFLAGS="-arch $ARCH -isysroot $IOS_SDK -mios-version-min=$MIN_IOS -fembed-bitcode-marker -O2"
@@ -297,7 +297,7 @@ workflows:
         script: |
           set -e
           IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          DEPS_DIR="$CODEMAGIC_BUILD_DIR/deps/ios_dist"
+          DEPS_DIR="$CM_BUILD_DIR/deps/ios_dist"
 
           cd ios && mkdir -p build && cd build
 
