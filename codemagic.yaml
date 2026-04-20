@@ -15,7 +15,7 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # FORCE all tools to look in the Homebrew directories
+          # FORCE all tools to look in the Homebrew directories for M2 architecture
           export PKG_CONFIG_PATH="$HB_PREFIX/lib/pkgconfig:$RUBY_PREFIX/lib/pkgconfig"
           export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix theora)/include:$(brew --prefix libvorbis)/include"
           export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
@@ -45,7 +45,7 @@ workflows:
         script: |
           cd ios/build
           mkdir -p Payload
-          # Searching for the app bundle in possible locations
+          # Automatically finds the app folder regardless of name
           APP_PATH=$(find . -name "*.app" -type d -maxdepth 2 | head -n 1)
           if [ -n "$APP_PATH" ]; then
             cp -r "$APP_PATH" Payload/
