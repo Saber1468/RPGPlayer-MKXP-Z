@@ -5,21 +5,26 @@ workflows:
     scripts:
       - name: Install Dependencies
         script: |
-          brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake openal-soft pkg-config
+          brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake openal-soft pkg-config uchardet
       - name: Build MKXP-Z
         script: |
           cd ios
           mkdir -p build && cd build
           
-          # These 3 lines solve the "file not found" errors by pointing to the exact folders
-          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix physfs)/include"
-          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix physfs)/lib"
-          export CMAKE_PREFIX_PATH="$(brew --prefix):$(brew --prefix sdl2):$(brew --prefix openal-soft)"
+          # Fix for SDL2, OpenAL, and Uchardet headers
+          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix)/include"
+          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix uchardet)/lib:$(brew --prefix ruby)/lib"
+          
+          # Preemptive Ruby Fix: Explicitly link Ruby headers and library
+          export RUBY_PATH=$(brew --prefix ruby)
 
           cmake .. -DIOS=1 \
-            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix):$RUBY_PATH" \
             -DOPENAL_INCLUDE_DIR="$(brew --prefix openal-soft)/include" \
-            -DOPENAL_LIBRARY="$(brew --prefix openal-soft)/lib/libopenal.dylib"
+            -DOPENAL_LIBRARY="$(brew --prefix openal-soft)/lib/libopenal.dylib" \
+            -DRUBY_EXECUTABLE="$RUBY_PATH/bin/ruby" \
+            -DRUBY_INCLUDE_DIR="$RUBY_PATH/include/ruby-3.3.0" \
+            -DRUBY_LIBRARY="$RUBY_PATH/lib/libruby.dylib"
           
           make -j$(sysctl -n hw.ncpu)
     artifacts:
