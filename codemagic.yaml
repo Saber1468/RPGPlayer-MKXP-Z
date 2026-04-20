@@ -8,35 +8,46 @@ workflows:
           brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis
       - name: Build MKXP-Z
         script: |
+          # 1. IDENTIFY ALL PATHS
           HB_PREFIX=$(brew --prefix)
           OPENAL_PREFIX=$(brew --prefix openal-soft)
           RUBY_PREFIX=$(brew --prefix ruby)
+          THEORA_PREFIX=$(brew --prefix theora)
+          VORBIS_PREFIX=$(brew --prefix libvorbis)
+          UCHARDET_PREFIX=$(brew --prefix uchardet)
           
-          cd ios
-          mkdir -p build && cd build
+          # 2. RESOLVE RUBY VERSIONING
+          RUBY_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
+          RUBY_S_VER=$(echo $RUBY_VER | cut -d'.' -f1-2)
+          RUBY_INC="$RUBY_PREFIX/include/ruby-$RUBY_S_VER.0"
+          RUBY_ARCH_INC="$RUBY_INC/arm64-darwin"
           
+          # 3. CONSTRUCT ENVIRONMENT OVERRIDES
           export PKG_CONFIG_PATH="$HB_PREFIX/lib/pkgconfig:$RUBY_PREFIX/lib/pkgconfig"
-          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix theora)/include:$(brew --prefix libvorbis)/include"
-          export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
-          export LDFLAGS="-L$HB_PREFIX/lib -L$RUBY_PREFIX/lib"
-          export CFLAGS="-I$HB_PREFIX/include -I$(brew --prefix theora)/include -I$(brew --prefix libvorbis)/include"
-          export CXXFLAGS="-I$HB_PREFIX/include -I$(brew --prefix theora)/include -I$(brew --prefix libvorbis)/include"
+          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$UCHARDET_PREFIX/include/uchardet:$THEORA_PREFIX/include:$VORBIS_PREFIX/include:$RUBY_INC:$RUBY_ARCH_INC"
+          export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib:$OPENAL_PREFIX/lib"
+          export LDFLAGS="-L$HB_PREFIX/lib -L$RUBY_PREFIX/lib -L$OPENAL_PREFIX/lib"
+          export CFLAGS="-I$HB_PREFIX/include -I$HB_PREFIX/include/SDL2 -I$RUBY_INC -I$RUBY_ARCH_INC"
+          export CXXFLAGS="-I$HB_PREFIX/include -I$HB_PREFIX/include/SDL2 -I$RUBY_INC -I$RUBY_ARCH_INC"
           
-          RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
-          RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
-
+          # 4. START BUILD
+          cd ios && mkdir -p build && cd build
+          
           cmake .. -DIOS=1 -DAPPLE=1 \
             -DCMAKE_PREFIX_PATH="$HB_PREFIX;$RUBY_PREFIX" \
+            -DCMAKE_CXX_STANDARD=17 \
             -DOPENAL_INCLUDE_DIR="$OPENAL_PREFIX/include/AL" \
             -DOPENAL_LIBRARY="$OPENAL_PREFIX/lib/libopenal.dylib" \
             -DRUBY_EXECUTABLE="$RUBY_PREFIX/bin/ruby" \
-            -DRUBY_INCLUDE_DIR="$RUBY_PREFIX/include/ruby-$RUBY_SHORT_VER.0" \
+            -DRUBY_INCLUDE_DIR="$RUBY_INC" \
+            -DRUBY_CONFIG_INCLUDE_DIR="$RUBY_ARCH_INC" \
             -DRUBY_LIBRARY="$RUBY_PREFIX/lib/libruby.dylib" \
-            -DUCHARDET_INCLUDE_DIR="$(brew --prefix uchardet)/include/uchardet" \
-            -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
+            -DUCHARDET_INCLUDE_DIR="$UCHARDET_PREFIX/include/uchardet" \
+            -DUCHARDET_LIBRARY="$UCHARDET_PREFIX/lib/libuchardet.a" \
             -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
             -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound" \
-            -DOPENGLES2_INCLUDE_DIR="$HB_PREFIX/include" \
+            -DOPENGLES2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
             -DCMAKE_INSTALL_PREFIX="../dist"
           
           make -j$(sysctl -n hw.ncpu)
@@ -44,14 +55,15 @@ workflows:
         script: |
           cd ios/build
           mkdir -p Payload
-          APP_PATH=$(find . -name "*.app" -type d -maxdepth 2 | head -n 1)
+          # Search for the compiled app bundle
+          APP_PATH=$(find . -name "*.app" -type d -maxdepth 3 | head -n 1)
           if [ -n "$APP_PATH" ]; then
             cp -r "$APP_PATH" Payload/
             zip -r mkxp-z-sideload.ipa Payload
+            echo "Successfully packaged: $APP_PATH"
           else
-            echo "Error: .app bundle not found!"
+            echo "FATAL ERROR: Compiled .app bundle not found in $(pwd)"
             exit 1
           fi
     artifacts:
       - ios/build/*.ipa
-      - ios/build/*.app
