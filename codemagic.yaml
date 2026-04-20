@@ -5,7 +5,7 @@ workflows:
     scripts:
       - name: Install Dependencies
         script: |
-          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet libtheora libvorbis
       - name: Build MKXP-Z
         script: |
           HB_PREFIX=$(brew --prefix)
@@ -15,11 +15,11 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # Force the compiler to see the Homebrew include directory for GLES2 headers
-          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet"
+          # Adding explicit search paths for all missing audio/video headers
+          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix libtheora)/include:$(brew --prefix libvorbis)/include"
           export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
-          export CFLAGS="-I$HB_PREFIX/include"
-          export CXXFLAGS="-I$HB_PREFIX/include"
+          export CFLAGS="-I$HB_PREFIX/include -I$(brew --prefix libtheora)/include -I$(brew --prefix libvorbis)/include"
+          export CXXFLAGS="-I$HB_PREFIX/include -I$(brew --prefix libtheora)/include -I$(brew --prefix libvorbis)/include"
           
           RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
           RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
