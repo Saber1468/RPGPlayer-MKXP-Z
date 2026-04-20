@@ -1,0 +1,17 @@
+workflows:
+  ios-mkxpz:
+    name: MKXP-Z iOS Build
+    instance_type: mac_mini_m1
+    scripts:
+      - name: Install Dependencies
+        script: |
+          brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake
+      - name: Build MKXP-Z
+        script: |
+          # Go into the ios folder and start the build
+          cd ios
+          mkdir build && cd build
+          cmake .. -DIOS=1
+          make
+    artifacts:
+      - ios/build/*.ipa
