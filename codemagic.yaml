@@ -71,8 +71,10 @@ workflows:
           echo ">>> Building libogg"
           curl -fsSL https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz | tar xz
           cd libogg-1.3.5
-          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
-            --enable-static --disable-shared --disable-dependency-tracking
+          env CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" \
+            CFLAGS="$COMMON_CFLAGS" LDFLAGS="$COMMON_LDFLAGS" \
+            ./configure --host=aarch64-apple-darwin --prefix="$DEPS_DIR" \
+              --enable-static --disable-shared --disable-dependency-tracking
           make -j$(sysctl -n hw.ncpu) && make install
           make_xcframework "ogg" "$DEPS_DIR/lib/libogg.a" "$DEPS_DIR/include/ogg"
           cd "$BUILD_DIR"
@@ -81,9 +83,11 @@ workflows:
           echo ">>> Building libvorbis"
           curl -fsSL https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz | tar xz
           cd libvorbis-1.3.7
-          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
-            --with-ogg="$DEPS_DIR" \
-            --enable-static --disable-shared --disable-dependency-tracking
+          env CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" \
+            CFLAGS="$COMMON_CFLAGS" LDFLAGS="$COMMON_LDFLAGS" \
+            ./configure --host=aarch64-apple-darwin --prefix="$DEPS_DIR" \
+              --with-ogg="$DEPS_DIR" \
+              --enable-static --disable-shared --disable-dependency-tracking
           make -j$(sysctl -n hw.ncpu) && make install
           make_xcframework "vorbis"     "$DEPS_DIR/lib/libvorbis.a"     "$DEPS_DIR/include/vorbis"
           make_xcframework "vorbisfile" "$DEPS_DIR/lib/libvorbisfile.a"  ""
@@ -93,10 +97,12 @@ workflows:
           echo ">>> Building libtheora"
           curl -fsSL https://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.gz | tar xz
           cd libtheora-1.1.1
-          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
-            --with-ogg="$DEPS_DIR" --with-vorbis="$DEPS_DIR" \
-            --enable-static --disable-shared --disable-dependency-tracking \
-            --disable-examples --disable-encode
+          env CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" \
+            CFLAGS="$COMMON_CFLAGS" LDFLAGS="$COMMON_LDFLAGS" \
+            ./configure --host=aarch64-apple-darwin --prefix="$DEPS_DIR" \
+              --with-ogg="$DEPS_DIR" --with-vorbis="$DEPS_DIR" \
+              --enable-static --disable-shared --disable-dependency-tracking \
+              --disable-examples --disable-encode
           make -j$(sysctl -n hw.ncpu) && make install
           make_xcframework "theora"    "$DEPS_DIR/lib/libtheora.a"    "$DEPS_DIR/include/theora"
           make_xcframework "theoradec" "$DEPS_DIR/lib/libtheoradec.a" ""
@@ -124,9 +130,11 @@ workflows:
           echo ">>> Building pixman"
           curl -fsSL https://cairographics.org/releases/pixman-0.42.2.tar.gz | tar xz
           cd pixman-0.42.2
-          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
-            --enable-static --disable-shared --disable-dependency-tracking \
-            --disable-gtk --disable-libpng
+          env CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" \
+            CFLAGS="$COMMON_CFLAGS" LDFLAGS="$COMMON_LDFLAGS" \
+            ./configure --host=aarch64-apple-darwin --prefix="$DEPS_DIR" \
+              --enable-static --disable-shared --disable-dependency-tracking \
+              --disable-gtk --disable-libpng
           make -j$(sysctl -n hw.ncpu) && make install
           make_xcframework "pixman" "$DEPS_DIR/lib/libpixman-1.a" "$DEPS_DIR/include/pixman-1"
           cd "$BUILD_DIR"
@@ -171,8 +179,10 @@ workflows:
           echo ">>> Building sigc++"
           curl -fsSL https://download.gnome.org/sources/libsigc++/2.12/libsigc++-2.12.0.tar.xz | tar xJ
           cd libsigc++-2.12.0
-          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
-            --enable-static --disable-shared --disable-dependency-tracking
+          env CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" \
+            CFLAGS="$COMMON_CFLAGS" CXXFLAGS="$COMMON_CXXFLAGS" LDFLAGS="$COMMON_LDFLAGS" \
+            ./configure --host=aarch64-apple-darwin --prefix="$DEPS_DIR" \
+              --enable-static --disable-shared --disable-dependency-tracking
           make -j$(sysctl -n hw.ncpu) && make install
           make_xcframework "sigc" "$DEPS_DIR/lib/libsigc-2.0.a" "$DEPS_DIR/include/sigc++-2.0"
           cd "$BUILD_DIR"
