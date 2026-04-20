@@ -1,42 +1,49 @@
-scripts:
-  - name: Install Dependencies
-    script: |
-      brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet
-  - name: Build MKXP-Z
-    script: |
-      HB_PREFIX=$(brew --prefix)
-      OPENAL_PREFIX=$(brew --prefix openal-soft)
-      RUBY_PREFIX=$(brew --prefix ruby)
-      
-      cd ios
-      mkdir -p build && cd build
-      
-      export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet"
-      export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
-      
-      RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
-      RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
+workflows:
+  ios-mkxpz:
+    name: MKXP-Z iOS Build
+    instance_type: mac_mini_m2
+    scripts:
+      - name: Install Dependencies
+        script: |
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet
+      - name: Build MKXP-Z
+        script: |
+          HB_PREFIX=$(brew --prefix)
+          OPENAL_PREFIX=$(brew --prefix openal-soft)
+          RUBY_PREFIX=$(brew --prefix ruby)
+          
+          cd ios
+          mkdir -p build && cd build
+          
+          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet"
+          export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
+          
+          RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
+          RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
 
-      cmake .. -DIOS=1 -DAPPLE=1 \
-        -DCMAKE_PREFIX_PATH="$HB_PREFIX;$RUBY_PREFIX" \
-        -DOPENAL_INCLUDE_DIR="$OPENAL_PREFIX/include/AL" \
-        -DOPENAL_LIBRARY="$OPENAL_PREFIX/lib/libopenal.dylib" \
-        -DRUBY_EXECUTABLE="$RUBY_PREFIX/bin/ruby" \
-        -DRUBY_INCLUDE_DIR="$RUBY_PREFIX/include/ruby-$RUBY_SHORT_VER.0" \
-        -DRUBY_LIBRARY="$RUBY_PREFIX/lib/libruby.dylib" \
-        -DUCHARDET_INCLUDE_DIR="$(brew --prefix uchardet)/include/uchardet" \
-        -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
-        -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
-        -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound"
-      
-      make -j$(sysctl -n hw.ncpu)
-  - name: Package for Sideloading
-    script: |
-      cd ios/build
-      mkdir -p Payload
-      if [ -d "mkxp-z.app" ]; then
-        cp -r mkxp-z.app Payload/
-      elif [ -d "MKXP-Z.app" ]; then
-        cp -r MKXP-Z.app Payload/
-      fi
-      zip -r mkxp-z-sideload.ipa Payload
+          cmake .. -DIOS=1 -DAPPLE=1 \
+            -DCMAKE_PREFIX_PATH="$HB_PREFIX;$RUBY_PREFIX" \
+            -DOPENAL_INCLUDE_DIR="$OPENAL_PREFIX/include/AL" \
+            -DOPENAL_LIBRARY="$OPENAL_PREFIX/lib/libopenal.dylib" \
+            -DRUBY_EXECUTABLE="$RUBY_PREFIX/bin/ruby" \
+            -DRUBY_INCLUDE_DIR="$RUBY_PREFIX/include/ruby-$RUBY_SHORT_VER.0" \
+            -DRUBY_LIBRARY="$RUBY_PREFIX/lib/libruby.dylib" \
+            -DUCHARDET_INCLUDE_DIR="$(brew --prefix uchardet)/include/uchardet" \
+            -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
+            -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
+            -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound"
+          
+          make -j$(sysctl -n hw.ncpu)
+      - name: Package for Sideloading
+        script: |
+          cd ios/build
+          mkdir -p Payload
+          if [ -d "mkxp-z.app" ]; then
+            cp -r mkxp-z.app Payload/
+          elif [ -d "MKXP-Z.app" ]; then
+            cp -r MKXP-Z.app Payload/
+          fi
+          zip -r mkxp-z-sideload.ipa Payload
+    artifacts:
+      - ios/build/*.ipa
+      - ios/build/*.app
