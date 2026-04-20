@@ -11,15 +11,13 @@ workflows:
           HB_PREFIX=$(brew --prefix)
           OPENAL_PREFIX=$(brew --prefix openal-soft)
           
-          # Re-adding the paths for OpenAL, SDL2, and the GLES2 fix
+          # Force the compiler to find SDL2, OpenAL, and GLES2 headers
           export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2/GLES2:$OPENAL_PREFIX/include:$OPENAL_PREFIX/include/AL"
           
           cd ios && mkdir -p build && cd build
           
-          # Point CMake to the headers while keeping the iOS architecture
-          cmake .. -DIOS=1 -DAPPLE=1 \
-            -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX" \
-            -DCMAKE_OSX_ARCHITECTURES="arm64"
+          # Single-line command to avoid hidden space errors
+          cmake .. -DIOS=1 -DAPPLE=1 -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX" -DCMAKE_OSX_ARCHITECTURES="arm64"
           
           make -j$(sysctl -n hw.ncpu)
       - name: Package for Sideloading
