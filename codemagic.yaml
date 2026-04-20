@@ -3,15 +3,23 @@ workflows:
     name: MKXP-Z iOS Build
     instance_type: mac_mini_m2
     scripts:
-      - name: Install Host Tools
+      - name: Install Dependencies
         script: |
-          brew install cmake pkg-config ruby
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis
       - name: Build MKXP-Z
         script: |
+          HB_PREFIX=$(brew --prefix)
+          OPENAL_PREFIX=$(brew --prefix openal-soft)
+          
+          # Re-adding the paths for OpenAL, SDL2, and the GLES2 fix
+          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2/GLES2:$OPENAL_PREFIX/include:$OPENAL_PREFIX/include/AL"
+          
           cd ios && mkdir -p build && cd build
           
-          # Clean CMake config specifically for iOS, letting the repo use its own deps
-          cmake .. -DIOS=1 -DAPPLE=1 -DCMAKE_OSX_ARCHITECTURES="arm64"
+          # Point CMake to the headers while keeping the iOS architecture
+          cmake .. -DIOS=1 -DAPPLE=1 \
+            -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64"
           
           make -j$(sysctl -n hw.ncpu)
       - name: Package for Sideloading
