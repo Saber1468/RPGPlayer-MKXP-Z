@@ -11,21 +11,19 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # THESE ARE THE MISSING LINES TO FIX THE AUDIO ERRORS
-          export CFLAGS="-I$(brew --prefix openal-soft)/include/AL -I$(brew --prefix sdl2)/include/SDL2"
-          export CXXFLAGS="-I$(brew --prefix openal-soft)/include/AL -I$(brew --prefix sdl2)/include/SDL2"
-          
-          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix sdl2_ttf)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix)/include"
-          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix sdl2_ttf)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix uchardet)/lib:$(brew --prefix ruby)/lib"
+          # Added SDL2_image and GLES2 subfolders to the search path
+          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix sdl2_image)/include/SDL2:$(brew --prefix sdl2_ttf)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix)/include"
+          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix sdl2_image)/lib:$(brew --prefix sdl2_ttf)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix uchardet)/lib:$(brew --prefix ruby)/lib"
           
           export RUBY_PATH=$(brew --prefix ruby)
+          export RUBY_VER=$(ruby -e 'print RUBY_VERSION')
 
           cmake .. -DIOS=1 \
             -DCMAKE_PREFIX_PATH="$(brew --prefix):$RUBY_PATH" \
             -DOPENAL_INCLUDE_DIR="$(brew --prefix openal-soft)/include" \
             -DOPENAL_LIBRARY="$(brew --prefix openal-soft)/lib/libopenal.dylib" \
             -DRUBY_EXECUTABLE="$RUBY_PATH/bin/ruby" \
-            -DRUBY_INCLUDE_DIR="$RUBY_PATH/include/ruby-3.3.0" \
+            -DRUBY_INCLUDE_DIR="$RUBY_PATH/include/ruby-$RUBY_VER" \
             -DRUBY_LIBRARY="$RUBY_PATH/lib/libruby.dylib"
           
           make -j$(sysctl -n hw.ncpu)
