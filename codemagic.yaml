@@ -3,34 +3,327 @@ workflows:
     name: MKXP-Z iOS Build
     instance_type: mac_mini_m2
     scripts:
-      - name: Install Dependencies
+      - name: Install Build Tools
         script: |
-          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis
+          # Only install build tools - NOT the libraries themselves (we build those for iOS)
+          brew install cmake pkg-config autoconf automake libtool nasm meson ninja
+
+      - name: Build iOS Dependencies
+        script: |
+          set -e
+
+          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          MIN_IOS="13.0"
+          ARCH="arm64"
+          TARGET="arm64-apple-ios${MIN_IOS}"
+          CC=$(xcrun --sdk iphoneos --find clang)
+          CXX=$(xcrun --sdk iphoneos --find clang++)
+          AR=$(xcrun --sdk iphoneos --find ar)
+          RANLIB=$(xcrun --sdk iphoneos --find ranlib)
+          STRIP=$(xcrun --sdk iphoneos --find strip)
+
+          DEPS_DIR="$CODEMAGIC_BUILD_DIR/deps/ios_dist"
+          XCFW_DIR="$DEPS_DIR/xcframeworks"
+          BUILD_DIR="$CODEMAGIC_BUILD_DIR/deps_build"
+          mkdir -p "$DEPS_DIR/include" "$DEPS_DIR/lib/device" "$XCFW_DIR" "$BUILD_DIR"
+
+          COMMON_CFLAGS="-arch $ARCH -isysroot $IOS_SDK -mios-version-min=$MIN_IOS -fembed-bitcode-marker -O2"
+          COMMON_CXXFLAGS="$COMMON_CFLAGS"
+          COMMON_LDFLAGS="-arch $ARCH -isysroot $IOS_SDK -mios-version-min=$MIN_IOS"
+
+          export CC CXX AR RANLIB STRIP
+          export CFLAGS="$COMMON_CFLAGS"
+          export CXXFLAGS="$COMMON_CXXFLAGS"
+          export LDFLAGS="$COMMON_LDFLAGS"
+
+          # Helper: wrap a static .a into a minimal xcframework for device
+          make_xcframework() {
+            local NAME=$1
+            local LIB=$2
+            local HEADERS=$3
+            local XCFW="$XCFW_DIR/${NAME}.xcframework"
+            rm -rf "$XCFW"
+            mkdir -p "$XCFW/ios-arm64"
+            cp "$LIB" "$XCFW/ios-arm64/${NAME}.a"
+            if [ -n "$HEADERS" ]; then
+              mkdir -p "$XCFW/ios-arm64/Headers"
+              cp -r $HEADERS "$XCFW/ios-arm64/Headers/"
+            fi
+            cat > "$XCFW/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>AvailableLibraries</key><array><dict>
+    <key>LibraryIdentifier</key><string>ios-arm64</string>
+    <key>LibraryPath</key><string>${NAME}.a</string>
+    <key>SupportedArchitectures</key><array><string>arm64</string></array>
+    <key>SupportedPlatform</key><string>ios</string>
+  </dict></array>
+  <key>CFBundlePackageType</key><string>XFWK</string>
+  <key>XCFrameworkFormatVersion</key><string>1.0</string>
+</dict></plist>
+PLIST
+          }
+
+          cd "$BUILD_DIR"
+
+          # ── 1. libogg ──────────────────────────────────────────────────────────
+          echo ">>> Building libogg"
+          curl -fsSL https://downloads.xiph.org/releases/ogg/libogg-1.3.5.tar.gz | tar xz
+          cd libogg-1.3.5
+          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
+            --enable-static --disable-shared --disable-dependency-tracking
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "ogg" "$DEPS_DIR/lib/libogg.a" "$DEPS_DIR/include/ogg"
+          cd "$BUILD_DIR"
+
+          # ── 2. libvorbis ───────────────────────────────────────────────────────
+          echo ">>> Building libvorbis"
+          curl -fsSL https://downloads.xiph.org/releases/vorbis/libvorbis-1.3.7.tar.gz | tar xz
+          cd libvorbis-1.3.7
+          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
+            --with-ogg="$DEPS_DIR" \
+            --enable-static --disable-shared --disable-dependency-tracking
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "vorbis"     "$DEPS_DIR/lib/libvorbis.a"     "$DEPS_DIR/include/vorbis"
+          make_xcframework "vorbisfile" "$DEPS_DIR/lib/libvorbisfile.a"  ""
+          cd "$BUILD_DIR"
+
+          # ── 3. libtheora ───────────────────────────────────────────────────────
+          echo ">>> Building libtheora"
+          curl -fsSL https://downloads.xiph.org/releases/theora/libtheora-1.1.1.tar.gz | tar xz
+          cd libtheora-1.1.1
+          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
+            --with-ogg="$DEPS_DIR" --with-vorbis="$DEPS_DIR" \
+            --enable-static --disable-shared --disable-dependency-tracking \
+            --disable-examples --disable-encode
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "theora"    "$DEPS_DIR/lib/libtheora.a"    "$DEPS_DIR/include/theora"
+          make_xcframework "theoradec" "$DEPS_DIR/lib/libtheoradec.a" ""
+          cd "$BUILD_DIR"
+
+          # ── 4. uchardet ────────────────────────────────────────────────────────
+          echo ">>> Building uchardet"
+          curl -fsSL https://www.freedesktop.org/software/uchardet/releases/uchardet-0.0.8.tar.xz | tar xJ
+          cd uchardet-0.0.8
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_BINARY=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          mkdir -p "$DEPS_DIR/include/uchardet"
+          cp src/uchardet.h "$DEPS_DIR/include/uchardet/uchardet.h" 2>/dev/null || true
+          make_xcframework "uchardet" "$DEPS_DIR/lib/libuchardet.a" "$DEPS_DIR/include/uchardet"
+          cd "$BUILD_DIR"
+
+          # ── 5. pixman ──────────────────────────────────────────────────────────
+          echo ">>> Building pixman"
+          curl -fsSL https://cairographics.org/releases/pixman-0.42.2.tar.gz | tar xz
+          cd pixman-0.42.2
+          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
+            --enable-static --disable-shared --disable-dependency-tracking \
+            --disable-gtk --disable-libpng
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "pixman" "$DEPS_DIR/lib/libpixman-1.a" "$DEPS_DIR/include/pixman-1"
+          cd "$BUILD_DIR"
+
+          # ── 6. PhysFS ──────────────────────────────────────────────────────────
+          echo ">>> Building PhysFS"
+          curl -fsSL https://icculus.org/physfs/downloads/physfs-3.0.2.tar.bz2 | tar xj
+          cd physfs-3.0.2
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DPHYSFS_BUILD_SHARED=OFF \
+            -DPHYSFS_BUILD_TEST=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "physfs" "$DEPS_DIR/lib/libphysfs.a" "$DEPS_DIR/include"
+          cd "$BUILD_DIR"
+
+          # ── 7. OpenAL-soft ─────────────────────────────────────────────────────
+          echo ">>> Building OpenAL-soft"
+          curl -fsSL https://github.com/kcat/openal-soft/archive/refs/tags/1.23.1.tar.gz | tar xz
+          cd openal-soft-1.23.1
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DLIBTYPE=STATIC \
+            -DALSOFT_UTILS=OFF \
+            -DALSOFT_EXAMPLES=OFF \
+            -DALSOFT_TESTS=OFF \
+            -DALSOFT_BACKEND_COREAUDIO=ON \
+            -DALSOFT_BACKEND_WAVE=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "openal" "$DEPS_DIR/lib/libopenal.a" "$DEPS_DIR/include/AL"
+          cd "$BUILD_DIR"
+
+          # ── 8. sigc++ ──────────────────────────────────────────────────────────
+          echo ">>> Building sigc++"
+          curl -fsSL https://download.gnome.org/sources/libsigc++/2.12/libsigc++-2.12.0.tar.xz | tar xJ
+          cd libsigc++-2.12.0
+          ./configure --host=arm-apple-darwin --prefix="$DEPS_DIR" \
+            --enable-static --disable-shared --disable-dependency-tracking
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "sigc" "$DEPS_DIR/lib/libsigc-2.0.a" "$DEPS_DIR/include/sigc++-2.0"
+          cd "$BUILD_DIR"
+
+          # ── 9. SDL2 ────────────────────────────────────────────────────────────
+          echo ">>> Building SDL2"
+          curl -fsSL https://github.com/libsdl-org/SDL/releases/download/release-2.30.3/SDL2-2.30.3.tar.gz | tar xz
+          cd SDL2-2.30.3
+          mkdir build_ios && cd build_ios
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DSDL_STATIC=ON \
+            -DSDL_SHARED=OFF \
+            -DSDL_TEST=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "SDL2" "$DEPS_DIR/lib/libSDL2.a" "$DEPS_DIR/include/SDL2"
+          cd "$BUILD_DIR"
+
+          # ── 10. SDL2_image ─────────────────────────────────────────────────────
+          echo ">>> Building SDL2_image"
+          curl -fsSL https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.2/SDL2_image-2.8.2.tar.gz | tar xz
+          cd SDL2_image-2.8.2
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DCMAKE_PREFIX_PATH="$DEPS_DIR" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DSDL2IMAGE_SAMPLES=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "SDL2_image" "$DEPS_DIR/lib/libSDL2_image.a" ""
+          cd "$BUILD_DIR"
+
+          # ── 11. SDL2_ttf ───────────────────────────────────────────────────────
+          echo ">>> Building SDL2_ttf"
+          curl -fsSL https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.22.0/SDL2_ttf-2.22.0.tar.gz | tar xz
+          cd SDL2_ttf-2.22.0
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DCMAKE_PREFIX_PATH="$DEPS_DIR" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DSDL2TTF_SAMPLES=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "SDL2_ttf" "$DEPS_DIR/lib/libSDL2_ttf.a" ""
+          cd "$BUILD_DIR"
+
+          # ── 12. SDL2_sound ─────────────────────────────────────────────────────
+          echo ">>> Building SDL2_sound"
+          curl -fsSL https://icculus.org/SDL_sound/downloads/SDL2_sound-2.0.2.tar.gz | tar xz
+          cd SDL2_sound-2.0.2
+          cmake . \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_IOS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS_DIR" \
+            -DCMAKE_PREFIX_PATH="$DEPS_DIR" \
+            -DSDLSOUND_BUILD_SHARED=OFF \
+            -DSDLSOUND_BUILD_TEST=OFF
+          make -j$(sysctl -n hw.ncpu) && make install
+          make_xcframework "SDL2_sound" "$DEPS_DIR/lib/libSDL2_sound.a" ""
+          cd "$BUILD_DIR"
+
+          # ── 13. Ruby (cross-compiled for iOS) ──────────────────────────────────
+          echo ">>> Building Ruby for iOS"
+          curl -fsSL https://cache.ruby-lang.org/pub/ruby/3.1/ruby-3.1.6.tar.gz | tar xz
+          cd ruby-3.1.6
+
+          # Build a host ruby first (needed for cross-compile)
+          mkdir build_host && cd build_host
+          unset CFLAGS CXXFLAGS LDFLAGS
+          ../configure --prefix="$BUILD_DIR/ruby_host" --disable-install-doc
+          make -j$(sysctl -n hw.ncpu) && make install
+          cd ..
+
+          # Now cross-compile for iOS
+          export CFLAGS="$COMMON_CFLAGS"
+          export CXXFLAGS="$COMMON_CXXFLAGS"
+          export LDFLAGS="$COMMON_LDFLAGS"
+
+          mkdir build_ios && cd build_ios
+          ../configure \
+            --host=aarch64-apple-darwin \
+            --target=aarch64-apple-ios \
+            --prefix="$DEPS_DIR" \
+            --with-destdir="" \
+            --enable-static \
+            --disable-shared \
+            --disable-install-doc \
+            --with-cross-build="$BUILD_DIR/ruby-3.1.6/build_host" \
+            --without-gmp \
+            --disable-rubygems \
+            ac_cv_func_fork=no \
+            ac_cv_func_system=no \
+            ac_cv_have_decl_sys_nerr=no
+          make -j$(sysctl -n hw.ncpu)
+
+          # Install Ruby headers and lib manually
+          RUBY_INC="$DEPS_DIR/include/ruby-3.1.0"
+          mkdir -p "$RUBY_INC/aarch64-ios" "$DEPS_DIR/lib/device"
+          cp -r ../include/ruby* "$RUBY_INC/" 2>/dev/null || true
+          cp .ext/include/aarch64-*/ruby/config.h "$DEPS_DIR/include/ruby-3.1.0/aarch64-ios/ruby/" 2>/dev/null || \
+            cp rbconfig.h "$DEPS_DIR/include/ruby-3.1.0/aarch64-ios/" 2>/dev/null || true
+          find . -name "libruby-static.a" -exec cp {} "$DEPS_DIR/lib/device/libruby.a" \; 2>/dev/null || \
+            find . -name "libruby.a" -exec cp {} "$DEPS_DIR/lib/device/libruby.a" \; 2>/dev/null || true
+
+          echo ">>> All dependencies built successfully"
+          ls "$XCFW_DIR"
+          ls "$DEPS_DIR/lib/device/"
+
       - name: Build MKXP-Z
         script: |
-          HB_PREFIX=$(brew --prefix)
-          OPENAL_PREFIX=$(brew --prefix openal-soft)
-          
-          # Force the compiler to find SDL2, OpenAL, and GLES2 headers
-          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2/GLES2:$OPENAL_PREFIX/include:$OPENAL_PREFIX/include/AL"
-          
+          set -e
+          IOS_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          DEPS_DIR="$CODEMAGIC_BUILD_DIR/deps/ios_dist"
+
           cd ios && mkdir -p build && cd build
-          
-          # Single-line command to avoid hidden space errors
-          cmake .. -DIOS=1 -DAPPLE=1 -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX" -DCMAKE_OSX_ARCHITECTURES="arm64"
-          
+
+          cmake .. \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT="$IOS_SDK" \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="13.0" \
+            -DDEPS_DIR="$DEPS_DIR"
+
           make -j$(sysctl -n hw.ncpu)
+
       - name: Package for Sideloading
         script: |
+          set -e
           cd ios/build
           mkdir -p Payload
           APP_PATH=$(find . -name "*.app" -type d -maxdepth 3 | head -n 1)
           if [ -n "$APP_PATH" ]; then
             cp -r "$APP_PATH" Payload/
             zip -r mkxp-z-sideload.ipa Payload
+            echo "IPA created successfully: mkxp-z-sideload.ipa"
           else
             echo "FATAL ERROR: .app bundle not found!"
             exit 1
           fi
+
     artifacts:
       - ios/build/*.ipa
