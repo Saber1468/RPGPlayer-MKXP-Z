@@ -1,8 +1,4 @@
-workflows:
-  ios-mkxpz:
-    name: MKXP-Z iOS Build
-    instance_type: mac_mini_m2
-    scripts:
+scripts:
       - name: Install Dependencies
         script: |
           brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet
