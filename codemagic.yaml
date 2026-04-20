@@ -1,11 +1,6 @@
-workflows:
-  ios-mkxpz:
-    name: MKXP-Z iOS Build
-    instance_type: mac_mini_m2
-    scripts:
+scripts:
       - name: Install Dependencies
         script: |
-          # Added sdl2_sound to fix the 'SDL_sound.h' missing error
           brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet
       - name: Build MKXP-Z
         script: |
@@ -16,11 +11,9 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # Fix: We add the explicit GLES2 path and the SDL2_sound path to CPATH
           export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet"
           export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
           
-          # Dynamic Ruby Versioning
           RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
           RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
 
@@ -37,18 +30,13 @@ workflows:
             -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound"
           
           make -j$(sysctl -n hw.ncpu)
-
       - name: Package for Sideloading
         script: |
           cd ios/build
           mkdir -p Payload
-          # Copy the .app into the Payload folder for IPA creation
           if [ -d "mkxp-z.app" ]; then
             cp -r mkxp-z.app Payload/
           elif [ -d "MKXP-Z.app" ]; then
             cp -r MKXP-Z.app Payload/
           fi
           zip -r mkxp-z-sideload.ipa Payload
-    artifacts:
-      - ios/build/*.ipa
-      - ios/build/*.app
