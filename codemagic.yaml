@@ -5,7 +5,7 @@ workflows:
     scripts:
       - name: Install Dependencies
         script: |
-          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet libtheora libvorbis
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis
       - name: Build MKXP-Z
         script: |
           HB_PREFIX=$(brew --prefix)
@@ -15,11 +15,13 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # Adding explicit search paths for all missing audio/video headers
-          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix libtheora)/include:$(brew --prefix libvorbis)/include"
+          # FORCE all tools to look in the Homebrew directories
+          export PKG_CONFIG_PATH="$HB_PREFIX/lib/pkgconfig:$RUBY_PREFIX/lib/pkgconfig"
+          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix theora)/include:$(brew --prefix libvorbis)/include"
           export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
-          export CFLAGS="-I$HB_PREFIX/include -I$(brew --prefix libtheora)/include -I$(brew --prefix libvorbis)/include"
-          export CXXFLAGS="-I$HB_PREFIX/include -I$(brew --prefix libtheora)/include -I$(brew --prefix libvorbis)/include"
+          export LDFLAGS="-L$HB_PREFIX/lib -L$RUBY_PREFIX/lib"
+          export CFLAGS="-I$HB_PREFIX/include -I$(brew --prefix theora)/include -I$(brew --prefix libvorbis)/include"
+          export CXXFLAGS="-I$HB_PREFIX/include -I$(brew --prefix theora)/include -I$(brew --prefix libvorbis)/include"
           
           RUBY_FULL_VER=$($RUBY_PREFIX/bin/ruby -e 'print RUBY_VERSION')
           RUBY_SHORT_VER=$(echo $RUBY_FULL_VER | cut -d'.' -f1-2)
@@ -35,19 +37,23 @@ workflows:
             -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
             -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
             -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound" \
-            -DOPENGLES2_INCLUDE_DIR="$HB_PREFIX/include"
+            -DOPENGLES2_INCLUDE_DIR="$HB_PREFIX/include" \
+            -DCMAKE_INSTALL_PREFIX="../dist"
           
           make -j$(sysctl -n hw.ncpu)
       - name: Package for Sideloading
         script: |
           cd ios/build
           mkdir -p Payload
-          if [ -d "mkxp-z.app" ]; then
-            cp -r mkxp-z.app Payload/
-          elif [ -d "MKXP-Z.app" ]; then
-            cp -r MKXP-Z.app Payload/
+          # Searching for the app bundle in possible locations
+          APP_PATH=$(find . -name "*.app" -type d -maxdepth 2 | head -n 1)
+          if [ -n "$APP_PATH" ]; then
+            cp -r "$APP_PATH" Payload/
+            zip -r mkxp-z-sideload.ipa Payload
+          else
+            echo "Error: .app bundle not found!"
+            exit 1
           fi
-          zip -r mkxp-z-sideload.ipa Payload
     artifacts:
       - ios/build/*.ipa
       - ios/build/*.app
