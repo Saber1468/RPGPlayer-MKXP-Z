@@ -5,13 +5,18 @@ workflows:
     scripts:
       - name: Install Dependencies
         script: |
+          # Install core libraries needed for the engine
           brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake
       - name: Build MKXP-Z
         script: |
-          # Go into the ios folder and start the build
+          # 1. Enter the iOS folder
           cd ios
-          mkdir build && cd build
-          cmake .. -DIOS=1
+          # 2. Create build directory
+          mkdir -p build && cd build
+          # 3. Configure and compile specifically for iOS
+          cmake .. -DIOS=1 -DCMAKE_PREFIX_PATH=$(brew --prefix)
           make
     artifacts:
       - ios/build/*.ipa
+      - ios/build/*.app
+
