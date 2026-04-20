@@ -15,6 +15,7 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
+          # Added explicit paths for GLES2 and SDL2 internal headers
           export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2_sound:$OPENAL_PREFIX/include/AL:$OPENAL_PREFIX/include:$(brew --prefix uchardet)/include/uchardet"
           export LIBRARY_PATH="$HB_PREFIX/lib:$RUBY_PREFIX/lib"
           
@@ -31,7 +32,8 @@ workflows:
             -DUCHARDET_INCLUDE_DIR="$(brew --prefix uchardet)/include/uchardet" \
             -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
             -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
-            -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound"
+            -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound" \
+            -DOPENGLES2_INCLUDE_DIR="$HB_PREFIX/include"
           
           make -j$(sysctl -n hw.ncpu)
       - name: Package for Sideloading
