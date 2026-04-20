@@ -5,20 +5,29 @@ workflows:
     scripts:
       - name: Install Dependencies
         script: |
-          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis
+          brew install sdl2 sdl2_image sdl2_ttf sdl2_sound physfs ruby cmake openal-soft pkg-config uchardet theora libvorbis pixman freetype
       - name: Build MKXP-Z
         script: |
           HB_PREFIX=$(brew --prefix)
           OPENAL_PREFIX=$(brew --prefix openal-soft)
-          
-          # Force the compiler to find SDL2, OpenAL, and GLES2 headers
-          export CPATH="$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$HB_PREFIX/include/SDL2/GLES2:$OPENAL_PREFIX/include:$OPENAL_PREFIX/include/AL"
-          
+          UCHARDET_PREFIX=$(brew --prefix uchardet)
+
+          # ios/shim/GLES2 provides the gl2platform.h / gl2.h / gl2ext.h
+          # headers that Homebrew's SDL2 SDL_opengles2.h tries to include.
+          # CMakeLists.txt adds the shim dir automatically; CPATH is the
+          # belt-and-suspenders fallback for any stray compiler invocations.
+          SHIM_DIR="$(pwd)/ios/shim"
+
+          export CPATH="$SHIM_DIR:$HB_PREFIX/include:$HB_PREFIX/include/SDL2:$OPENAL_PREFIX/include:$OPENAL_PREFIX/include/AL:$UCHARDET_PREFIX/include:$UCHARDET_PREFIX/include/uchardet"
+          export LIBRARY_PATH="$HB_PREFIX/lib:$OPENAL_PREFIX/lib:$UCHARDET_PREFIX/lib"
+
           cd ios && mkdir -p build && cd build
-          
-          # Single-line command to avoid hidden space errors
-          cmake .. -DIOS=1 -DAPPLE=1 -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX" -DCMAKE_OSX_ARCHITECTURES="arm64"
-          
+
+          cmake .. \
+            -DAPPLE=1 \
+            -DCMAKE_OSX_ARCHITECTURES="arm64" \
+            -DCMAKE_PREFIX_PATH="$HB_PREFIX;$OPENAL_PREFIX;$UCHARDET_PREFIX"
+
           make -j$(sysctl -n hw.ncpu)
       - name: Package for Sideloading
         script: |

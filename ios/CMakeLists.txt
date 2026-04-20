@@ -55,7 +55,79 @@ set(MKXPZ_BINDING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../binding")
 set(MKXPZ_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../shader")
 set(MKXPZ_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../assets")
 
+# ====================
+# Dependency Discovery
+# ====================
+# When the pre-built iOS deps tree (DEPS_DIR) is not populated, fall back
+# to discovering headers from Homebrew / system packages so that the
+# compilation step can succeed on a plain CodeMagic Mac runner.
+
+set(USE_SYSTEM_DEPS FALSE)
+if(NOT EXISTS "${DEPS_DIR}/include")
+    set(USE_SYSTEM_DEPS TRUE)
+    message(STATUS "  DEPS_DIR/include not found -- falling back to system packages")
+
+    find_package(PkgConfig QUIET)
+
+    # --- SDL2 ---
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(SYS_SDL2    QUIET sdl2)
+        pkg_check_modules(SYS_UCHAR   QUIET uchardet)
+        pkg_check_modules(SYS_OPENAL  QUIET openal)
+        pkg_check_modules(SYS_PHYSFS  QUIET physfs)
+        pkg_check_modules(SYS_VORBIS  QUIET vorbisfile)
+        pkg_check_modules(SYS_THEORA  QUIET theoradec)
+        pkg_check_modules(SYS_PIXMAN  QUIET pixman-1)
+        pkg_check_modules(SYS_FREETYPE QUIET freetype2)
+    endif()
+
+    # Collect every discovered include dir into one list
+    set(SYS_INCLUDE_DIRS
+        ${SYS_SDL2_INCLUDE_DIRS}
+        ${SYS_UCHAR_INCLUDE_DIRS}
+        ${SYS_OPENAL_INCLUDE_DIRS}
+        ${SYS_PHYSFS_INCLUDE_DIRS}
+        ${SYS_VORBIS_INCLUDE_DIRS}
+        ${SYS_THEORA_INCLUDE_DIRS}
+        ${SYS_PIXMAN_INCLUDE_DIRS}
+        ${SYS_FREETYPE_INCLUDE_DIRS}
+    )
+
+    # Also try direct Homebrew paths as a last resort
+    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HB_PREFIX
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(HB_PREFIX)
+        foreach(_pkg openal-soft uchardet ruby)
+            execute_process(COMMAND brew --prefix ${_pkg}
+                            OUTPUT_VARIABLE _PKG_PREFIX
+                            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+            if(_PKG_PREFIX AND EXISTS "${_PKG_PREFIX}/include")
+                list(APPEND SYS_INCLUDE_DIRS "${_PKG_PREFIX}/include")
+            endif()
+        endforeach()
+        # OpenAL sub-directory
+        execute_process(COMMAND brew --prefix openal-soft
+                        OUTPUT_VARIABLE _OAL_PREFIX
+                        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_OAL_PREFIX AND EXISTS "${_OAL_PREFIX}/include/AL")
+            list(APPEND SYS_INCLUDE_DIRS "${_OAL_PREFIX}/include/AL")
+        endif()
+        # uchardet sub-directory (header may live under include/uchardet/)
+        execute_process(COMMAND brew --prefix uchardet
+                        OUTPUT_VARIABLE _UC_PREFIX
+                        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(_UC_PREFIX AND EXISTS "${_UC_PREFIX}/include/uchardet")
+            list(APPEND SYS_INCLUDE_DIRS "${_UC_PREFIX}/include/uchardet")
+        endif()
+    endif()
+endif()
+
 include_directories(
+    # GLES2 shim headers MUST appear before SDL2 so that
+    # SDL_opengles2.h's  #include <GLES2/gl2platform.h>  resolves
+    # to our local shim instead of failing.
+    ${CMAKE_CURRENT_SOURCE_DIR}/shim
+
     ${CMAKE_CURRENT_SOURCE_DIR}  # iOS-specific stubs (TouchBar.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/generated  # Generated xxd headers
     ${CMAKE_CURRENT_SOURCE_DIR}/..  # For 'src/util/util.h' style includes
@@ -77,7 +149,7 @@ include_directories(
     ${MKXPZ_SRC_DIR}/util/sigslot/adapter
     ${MKXPZ_SRC_DIR}/theoraplay
     ${MKXPZ_BINDING_DIR}
-    # Dependencies
+    # Dependencies (pre-built tree first, then system fallback)
     ${DEPS_DIR}/include
     ${DEPS_DIR}/include/AL   # OpenAL headers
     ${DEPS_DIR}/include/SDL2
@@ -87,6 +159,11 @@ include_directories(
     ${DEPS_DIR}/include/ruby-4.0.0+0
     ${DEPS_DIR}/include/ruby-4.0.0+0/aarch64-ios  # iOS-specific Ruby config.h
 )
+
+# Append system/Homebrew paths when pre-built deps are absent
+if(USE_SYSTEM_DEPS AND SYS_INCLUDE_DIRS)
+    include_directories(SYSTEM ${SYS_INCLUDE_DIRS})
+endif()
 
 # ====================
 # Source Files
