@@ -11,14 +11,16 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # Force CMake to find Homebrew's SDL2 and OpenAL paths
+          # These 3 lines solve the "file not found" errors by pointing to the exact folders
+          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix physfs)/include"
+          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix physfs)/lib"
           export CMAKE_PREFIX_PATH="$(brew --prefix):$(brew --prefix sdl2):$(brew --prefix openal-soft)"
-          
+
           cmake .. -DIOS=1 \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DOPENAL_INCLUDE_DIR="$(brew --prefix openal-soft)/include" \
             -DOPENAL_LIBRARY="$(brew --prefix openal-soft)/lib/libopenal.dylib"
-            
+          
           make -j$(sysctl -n hw.ncpu)
     artifacts:
       - ios/build/*.ipa
