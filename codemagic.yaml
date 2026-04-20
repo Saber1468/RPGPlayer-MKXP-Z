@@ -2,21 +2,28 @@ workflows:
   ios-mkxpz:
     name: MKXP-Z iOS Build
     instance_type: mac_mini_m1
+    max_build_duration: 30
     scripts:
       - name: Install Dependencies
         script: |
-          # Install core libraries needed for the engine
-          brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake
+          # Install every possible library the engine might call for
+          brew install sdl2 sdl2_image sdl2_ttf physfs ruby cmake openal-soft pkg-config
       - name: Build MKXP-Z
         script: |
-          # 1. Enter the iOS folder
           cd ios
-          # 2. Create build directory
           mkdir -p build && cd build
-          # 3. Configure and compile specifically for iOS
-          cmake .. -DIOS=1 -DCMAKE_PREFIX_PATH=$(brew --prefix)
-          make
+          
+          # We define specific paths to stop the "file not found" errors
+          export SDL2_DIR=$(brew --prefix sdl2)
+          export OPENAL_DIR=$(brew --prefix openal-soft)
+          
+          cmake .. -DIOS=1 \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DOPENAL_INCLUDE_DIR="$OPENAL_DIR/include" \
+            -DOPENAL_LIBRARY="$OPENAL_DIR/lib/libopenal.dylib" \
+            -DRUBY_INCLUDE_DIR="$(brew --prefix ruby)/include"
+          
+          make -j$(sysctl -n hw.ncpu)
     artifacts:
       - ios/build/*.ipa
       - ios/build/*.app
-
