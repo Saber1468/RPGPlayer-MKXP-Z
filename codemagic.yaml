@@ -30,7 +30,7 @@ workflows:
             -DRUBY_LIBRARY="$RUBY_PREFIX/lib/libruby.dylib" \
             -DUCHARDET_INCLUDE_DIR="$(brew --prefix uchardet)/include/uchardet" \
             -DUCHARDET_LIBRARY="$(brew --prefix uchardet)/lib/libuchardet.a" \
-            -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" \
+            -DSDL2_INCLUDE_DIR="$HB_PREFIX/include/SDL2" 
             -DSDL2_SOUND_INCLUDE_DIR="$HB_PREFIX/include/SDL2_sound"
           
           make -j$(sysctl -n hw.ncpu)
