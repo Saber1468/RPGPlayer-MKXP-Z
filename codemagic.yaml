@@ -11,11 +11,11 @@ workflows:
           cd ios
           mkdir -p build && cd build
           
-          # Fix for SDL2, OpenAL, and Uchardet headers
-          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix)/include"
-          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix uchardet)/lib:$(brew --prefix ruby)/lib"
+          # This 'super-path' solves the al.h and SDL_ttf.h errors specifically
+          export CPATH="$(brew --prefix sdl2)/include/SDL2:$(brew --prefix sdl2_ttf)/include/SDL2:$(brew --prefix openal-soft)/include:$(brew --prefix uchardet)/include/uchardet:$(brew --prefix)/include"
+          export LIBRARY_PATH="$(brew --prefix sdl2)/lib:$(brew --prefix sdl2_ttf)/lib:$(brew --prefix openal-soft)/lib:$(brew --prefix uchardet)/lib:$(brew --prefix ruby)/lib"
           
-          # Explicit Ruby Fix
+          # Preemptive Ruby Fix
           export RUBY_PATH=$(brew --prefix ruby)
 
           cmake .. -DIOS=1 \
